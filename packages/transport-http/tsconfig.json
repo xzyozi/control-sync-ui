@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    "paths": {
+      "@csu/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}
