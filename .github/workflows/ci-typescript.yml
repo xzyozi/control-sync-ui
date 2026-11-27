@@ -39,7 +39,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
-          cache: 'npm'
+          # ロックファイルがあるときだけ、npm のキャッシュを有効にする。
+          # ない場合に cache: 'npm' を指定すると、このステップが失敗する。
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
       - name: Install dependencies
         if: steps.check_pkg.outputs.has_pkg == 'true'

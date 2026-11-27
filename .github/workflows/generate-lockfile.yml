@@ -1,0 +1,36 @@
+name: Generate package-lock.json
+
+# ローカルに Node がない環境で、package-lock.json を生成するための手動実行用ワークフロー。
+# 実行後、成果物（artifact）の package-lock.json を、リポジトリのルートにコミットする。
+# ロックファイルをコミットしたら、このワークフローは削除してよい。
+# （docs/setup/CSU-ENV-001 §6 の例外 EX-002 の解除手順）
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Generate lock file only
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Upload package-lock.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
+          if-no-files-found: error
