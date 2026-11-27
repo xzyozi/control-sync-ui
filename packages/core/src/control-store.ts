@@ -24,10 +24,15 @@ export class ControlStore {
   }
 
   /**
-   * 制御状態を反映する。保持している値より小さい controlSeq は、
+   * 制御状態を反映する（DD F-002）。保持している値より小さい controlSeq は、
    * 古い応答として反映しない（false を返す）。
+   * controlSeq は、0 以上の整数でなければならない（そうでない場合は RangeError）。
+   * NaN などを受け入れると、以後の比較が常に false になり、古い応答も反映されるため。
    */
-  apply(controlSeq: number, control: ControlState): boolean {
+  applyControl(controlSeq: number, control: ControlState): boolean {
+    if (!Number.isInteger(controlSeq) || controlSeq < 0) {
+      throw new RangeError(`invalid controlSeq: ${controlSeq}`);
+    }
     if (controlSeq < this.seq) {
       return false;
     }

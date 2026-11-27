@@ -23,17 +23,17 @@ describe("ControlStore", () => {
 
   it("TC-116: 新しい controlSeq を反映し、小さい値は反映しない", () => {
     const store = new ControlStore();
-    expect(store.apply(3, ALL)).toBe(true);
+    expect(store.applyControl(3, ALL)).toBe(true);
     expect(store.getControlSeq()).toBe(3);
     expect(store.getControl()).toEqual(ALL);
 
     // 保持している値より小さい値（古い応答）は、反映されない。
-    expect(store.apply(2, TYPES)).toBe(false);
+    expect(store.applyControl(2, TYPES)).toBe(false);
     expect(store.getControlSeq()).toBe(3);
     expect(store.getControl()).toEqual(ALL);
 
     // 同じ値は反映される（同じ状態の再取得）。
-    expect(store.apply(3, TYPES)).toBe(true);
+    expect(store.applyControl(3, TYPES)).toBe(true);
     expect(store.getControl()).toEqual(TYPES);
   });
 
@@ -47,9 +47,23 @@ describe("ControlStore", () => {
     await domain.apply(makeEvent("e1", "room-a", "add", 7));
 
     const control = new ControlStore();
-    control.apply(1, ALL);
-    control.apply(2, TYPES);
+    control.applyControl(1, ALL);
+    control.applyControl(2, TYPES);
 
     expect(domain.state).toBe(7);
+  });
+
+  it("controlSeq が NaN、負の値、小数の場合は RangeError で、状態は変わらない", () => {
+    const store = new ControlStore();
+    store.applyControl(2, ALL);
+
+    for (const invalid of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => store.applyControl(invalid, TYPES)).toThrow(RangeError);
+    }
+    expect(store.getControlSeq()).toBe(2);
+    expect(store.getControl()).toEqual(ALL);
+
+    // NaN を拒否するので、その後も古い応答は反映されない。
+    expect(store.applyControl(1, TYPES)).toBe(false);
   });
 });

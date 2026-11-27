@@ -21,9 +21,13 @@ function matchesFilter(
         return false;
       }
       return filter.types.includes(event.payload.type);
-    default:
-      // "NONE"
+    case "NONE":
       return false;
+    default: {
+      // mode を追加したのに、ここを更新し忘れると、型検査で失敗する。
+      const unreachable: never = filter.mode;
+      return unreachable;
+    }
   }
 }
 
@@ -56,7 +60,7 @@ export class ReactiveOutbox {
     private readonly controlStore: ControlStore,
     private readonly roomId: string,
     private readonly targetId: string,
-  ) {}
+  ) { }
 
   async evaluate(): Promise<SendBatch> {
     const pending = await this.storage.readPending(this.roomId);

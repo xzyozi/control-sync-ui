@@ -61,6 +61,22 @@ describe("evaluateOutbox", () => {
     ).toHaveLength(0);
   });
 
+  it("TC-104: TYPES と targetIds の両方を満たす場合だけ送る", async () => {
+    const { events } = await seed();
+    const filter: SendFilter = {
+      mode: "TYPES",
+      types: ["temperature"],
+      targetIds: ["target-1"],
+    };
+
+    // targetIds に含まれ、type も一致するイベントだけが選ばれる。
+    expect(
+      evaluate(events, filter, "target-1").events.map((e) => e.eventId),
+    ).toEqual(["e1"]);
+    // targetIds に含まれない端末は、type が一致しても送らない。
+    expect(evaluate(events, filter, "target-2").events).toHaveLength(0);
+  });
+
   it("評価時の controlSeq を、そのまま返す", async () => {
     const { events } = await seed();
     expect(evaluate(events, { mode: "ALL" }).controlSeq).toBe(5);
@@ -71,7 +87,7 @@ describe("ReactiveOutbox", () => {
   it("TC-117: 指定した Room のイベントだけが送信対象になり、別の Room は読み出されない", async () => {
     const { storage } = await seed();
     const control = new ControlStore();
-    control.apply(1, { sendFilter: { mode: "ALL" }, holderId: null });
+    control.applyControl(1, { sendFilter: { mode: "ALL" }, holderId: null });
 
     const outbox = new ReactiveOutbox(storage, control, "room-a", "target-1");
     const batch = await outbox.evaluate();
@@ -84,7 +100,7 @@ describe("ReactiveOutbox", () => {
   it("送信済み（SENT）のイベントは、送信対象にならない", async () => {
     const { storage } = await seed();
     const control = new ControlStore();
-    control.apply(1, { sendFilter: { mode: "ALL" }, holderId: null });
+    control.applyControl(1, { sendFilter: { mode: "ALL" }, holderId: null });
     await storage.markSent("e1", 1);
 
     const outbox = new ReactiveOutbox(storage, control, "room-a", "target-1");
@@ -96,7 +112,7 @@ describe("ReactiveOutbox", () => {
   it("フィルタに合わないイベントは、未送信（PENDING）のまま残る", async () => {
     const { storage } = await seed();
     const control = new ControlStore();
-    control.apply(1, { sendFilter: { mode: "NONE" }, holderId: null });
+    control.applyControl(1, { sendFilter: { mode: "NONE" }, holderId: null });
 
     const outbox = new ReactiveOutbox(storage, control, "room-a", "target-1");
     expect((await outbox.evaluate()).events).toHaveLength(0);

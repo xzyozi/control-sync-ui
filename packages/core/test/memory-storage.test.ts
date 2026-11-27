@@ -27,6 +27,21 @@ describe("InMemoryStoragePort", () => {
     expect(await storage.readAll("room-a")).toHaveLength(1);
   });
 
+  it("Room が混在していても、各 Room の読み出しは localSeq の順になる", async () => {
+    const storage = new InMemoryStoragePort();
+    await storage.append(makeEvent("a1", "room-a", "add"));
+    await storage.append(makeEvent("b1", "room-b", "add"));
+    await storage.append(makeEvent("a2", "room-a", "add"));
+    await storage.append(makeEvent("b2", "room-b", "add"));
+
+    const roomA = await storage.readAll("room-a");
+    expect(roomA.map((e) => e.eventId)).toEqual(["a1", "a2"]);
+    expect(roomA.map((e) => e.localSeq)).toEqual([1, 3]);
+
+    const pendingB = await storage.readPending("room-b");
+    expect(pendingB.map((e) => e.eventId)).toEqual(["b1", "b2"]);
+  });
+
   it("未知の eventId の markSent は、エラーになる", async () => {
     const storage = new InMemoryStoragePort();
     await expect(storage.markSent("unknown", 1)).rejects.toThrow(
