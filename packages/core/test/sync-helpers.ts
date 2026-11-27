@@ -2,7 +2,7 @@ import {
   ControlStore,
   InMemoryStoragePort,
   SyncEngine,
-  TransportError,
+  type TransportError,
 } from "../src/index";
 import type {
   AcceptedEvent,
