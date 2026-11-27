@@ -5,7 +5,7 @@ document_number: "[PROJECT_PREFIX]-REQ-[NUMBER]"
 document_role: "requirement"
 ssot_scope: "requirements"
 status: "draft"
-version: "0.1"
+version: "1.0"
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
 author: "[作成者 / チーム名]"
@@ -78,8 +78,19 @@ related_documents:
 | :---- | :--------- | :--------------------- | :--------- |
 | OP-02 | [未決事項] | [暫定方針]             | [時期]     |
 
-## 7. 改訂履歴
+## 7. 作成完了チェック
 
-| 版   | 日付       | 変更内容 |
-| :--- | :--------- | :------- |
-| 0.1  | YYYY-MM-DD | 初版     |
+- [ ] `document_role`、`ssot_scope`、`status`、`owner`をFrontmatterへ設定した。
+- [ ] 目的、スコープ、制約を記入した。
+- [ ] 各要求に、判定できる形の受け入れ条件を記入した。
+- [ ] 対象外を、Issue などへのリンクで記入した。
+- [ ] 決定済み事項と未決事項を分け、未決事項に暫定方針と決める時期を記入した。
+- [ ] 設計に当たる記述（構造、契約、具体値）を、BD、IF、DD、DS へ委譲し、重複して書いていない。
+- [ ] Issue の内容を、重複して書いていない（Issue はリンクで参照した）。
+- [ ] 未置換の `[ ... ]`、`YYYY-MM-DD`、サンプル固有名が残っていない。
+
+## 8. 改訂履歴 (Change Log)
+
+| 版数    | 改訂日     | 変更者     | 変更内容・変更理由 (Why) |
+| :------ | :--------- | :--------- | :----------------------- |
+| Rev.1.0 | YYYY-MM-DD | [作成者名] | 新規作成（初版制定）     |
