@@ -20,7 +20,8 @@ const change = (
     {
       operatorId: overrides.operatorId ?? "op-1",
       targetId: overrides.targetId ?? "t1",
-      sendFilter: overrides.sendFilter ?? ALL_FILTER,
+      // null も「不正な値」として検証したいので、?? ではなく "in" で既定値を判定する。
+      sendFilter: "sendFilter" in overrides ? overrides.sendFilter : ALL_FILTER,
     },
     requestEnv,
   );
