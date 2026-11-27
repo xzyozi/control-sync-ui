@@ -5,7 +5,7 @@ document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
 status: "draft"
-version: "1.4"
+version: "1.5"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -95,7 +95,7 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 ### 4.6 再現性・サプライチェーン
 
 - **依存の固定**: `package-lock.json` を追跡し、CI は `npm ci` で、ロックファイルのとおりに導入する。
-- **公開直後のパッケージ**: ローカルの開発環境では、パッケージマネージャーに、公開から一定期間（npm の `min-release-age=3`、pnpm の `minimumReleaseAge=4320`）を待つ設定をする。
+- **公開直後のパッケージ**: ローカルの開発環境では、パッケージマネージャーに、公開から一定期間（npm の `min-release-age=3`、pnpm の `minimumReleaseAge=4320`）を待つ設定をする。CI 上でロックファイルを生成する手動ワークフロー（`generate-lockfile.yml`）も、同じ趣旨で、`npm install` に `--before`（3日前の時点）を付け、公開から3日以内の版を固定しない。
 - **CI のブラウザ**: Mermaid の検証に必要な Chrome は、バージョンを固定してインストールする（`validate-mermaid.yml`）。
 
 ## 5. 検証方法
@@ -139,3 +139,4 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.2 | 2026-11-28 | xzyozi | npm ワークスペースの構成（OP-11）と `transport-http`（OP-08）を反映。ルートに `package.json` を追加したため、EX-001 を解除。QG-001（lint のみ）、QG-003、`package-lock.json` の扱いを明記。                                                                                     |
 | Rev.1.3 | 2026-11-28 | xzyozi | CI 失敗（`setup-node` の `cache: npm` がロックファイルなしで失敗）への対応。`ci-typescript.yml` のキャッシュをロックファイルがあるときだけ有効にし、ロックファイル生成用の手動ワークフローを追加。期限つきの例外 EX-002 を登録。§4.2 の Biome の記述を実態（lint のみ）に修正。 |
 | Rev.1.4 | 2026-11-28 | xzyozi | CI の lint（QG-001）が、既存の `.github/scripts/validateMermaidMarkdown.mjs` の `noForEach` で失敗したため、Biome の検査対象を `packages/` とルートの `vitest.config.ts` に限定し、QG-001 の範囲として明記。                                                                    |
+| Rev.1.5 | 2026-11-28 | xzyozi | ロックファイル生成ワークフローに、公開から3日以内の版を固定しない設定（`--before`）を追加し、§4.6 に明記。                                                                                                                                                                      |
