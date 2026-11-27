@@ -56,7 +56,7 @@ describe("DomainStore", () => {
     expect(store.state).toBe(10);
   });
 
-  it("同じ eventId の再追記は、追記済みとして扱い、状態を更新せずに現在の状態を返す", async () => {
+  it("TC-121: 同じ eventId の再追記は、追記済みとして扱い、状態を更新せずに現在の状態を返す", async () => {
     const storage = new InMemoryStoragePort();
     const store = new DomainStore(storage, "room-a", sumReducer, 0);
     await store.apply(input("e1", 4));
@@ -75,7 +75,7 @@ describe("DomainStore", () => {
     expect(await store.restore()).toBe(1);
   });
 
-  it("createdAt を省略した場合は、追記時の時刻（注入した now）が使われる", async () => {
+  it("TC-122: createdAt を省略した場合は、追記時の時刻（注入した now）が使われる", async () => {
     const storage = new InMemoryStoragePort();
     const store = new DomainStore(
       storage,
@@ -90,7 +90,7 @@ describe("DomainStore", () => {
     expect(saved?.createdAt).toBe("2026-12-31T23:59:59.000Z");
   });
 
-  it("createdAt を指定した場合は、その値が使われる", async () => {
+  it("TC-122: createdAt を指定した場合は、その値が使われる", async () => {
     const storage = new InMemoryStoragePort();
     const store = new DomainStore(storage, "room-a", sumReducer, 0);
     await store.apply({

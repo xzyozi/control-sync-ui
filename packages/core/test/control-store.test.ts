@@ -53,7 +53,7 @@ describe("ControlStore", () => {
     expect(domain.state).toBe(7);
   });
 
-  it("controlSeq が NaN、負の値、小数の場合は RangeError で、状態は変わらない", () => {
+  it("TC-123: controlSeq が NaN、負の値、小数、無限大の場合は RangeError で、状態は変わらない", () => {
     const store = new ControlStore();
     store.applyControl(2, ALL);
 
