@@ -6,13 +6,14 @@ ssot_scope: "environment"
 status: "draft"
 version: "1.0"
 created_at: "2026-11-04"
-updated_at: "2026-11-04"
+updated_at: "2026-11-28"
 author: "xzyozi"
 owner: "xzyozi"
 purpose: "TypeScript 共通テンプレート（templates/typescript/）を利用した新規プロジェクト立ち上げおよび汎用 CI 連携の手順を定義するため"
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
   - "Git Flow 運用規約（相対パス: ./git_flow_and_branch_policy.md）"
+  - "CSU-ENV-001 環境・開発基盤仕様書（相対パス: ./CSU-ENV-001_環境・開発基盤仕様書.md）"
 ---
 
 # TypeScript プロジェクト環境構築手順書
@@ -32,7 +33,7 @@ related_documents:
 
 ## 2. 前提条件
 
-- **ランタイム**: Node.js 20.x 以上（推奨: 最新 LTS）
+- **ランタイム**: Node.js 20.x 以上（推奨: 最新 LTS）。プロジェクト固有の版と品質ゲートは、環境・開発基盤仕様書（CSU-ENV-001）を正本とする。
 - **パッケージマネージャ**: npm 10.x 以上
 - **初期資材**: リポジトリ直下の `templates/typescript/` 雛形一式
 
@@ -75,7 +76,7 @@ rm -f pyproject.toml
 npm install
 ```
 
-実行後、`package-lock.json` が生成されます。**`package-lock.json` は必ず Git の追跡対象にコミットしてください**（CI 内の `npm ci` で必須となります）。
+実行後、`package-lock.json` が生成されます。**`package-lock.json` は必ず Git の追跡対象にコミットしてください**（CI 内の `npm ci` で必須となります。この規則は、環境・開発基盤仕様書（CSU-ENV-001）を正本とします）。
 
 ---
 
@@ -83,12 +84,12 @@ npm install
 
 以下の 4 コマンドを順に実行し、すべて正常終了（エラー 0 件）することを確認します。
 
-| 確認項目 | 実行コマンド | 期待結果 |
-| :--- | :--- | :--- |
-| **Lint / Format** | `npm run lint` | 全ファイルで指摘ゼロで終了すること |
-| **型検査** | `npm run typecheck` | 型エラーなしで終了すること |
-| **単体テスト** | `npm test` | 0 件またはサンプルテストが通過すること |
-| **ビルド** | `npm run build` | `dist/` ディレクトリにコンパイル成果物が出力されること |
+| 確認項目          | 実行コマンド        | 期待結果                                               |
+| :---------------- | :------------------ | :----------------------------------------------------- |
+| **Lint / Format** | `npm run lint`      | 全ファイルで指摘ゼロで終了すること                     |
+| **型検査**        | `npm run typecheck` | 型エラーなしで終了すること                             |
+| **単体テスト**    | `npm test`          | 0 件またはサンプルテストが通過すること                 |
+| **ビルド**        | `npm run build`     | `dist/` ディレクトリにコンパイル成果物が出力されること |
 
 ---
 
