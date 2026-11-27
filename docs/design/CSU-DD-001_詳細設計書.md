@@ -5,7 +5,7 @@ document_number: "CSU-DD-001"
 document_role: "normative"
 ssot_scope: "module_behavior"
 status: "draft"
-version: "1.2"
+version: "1.3"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -119,7 +119,10 @@ related_documents:
 - **対象機能・関数名**: `controlSeq` の発行（`issueControlSeq`）、イベントの受理（`acceptEvents`）。
 - **機能概要**: Room ごとに `controlSeq` を管理する。制御状態が変わる操作（IF-006 の変更、lease の保持者の変更）のたびに、直前の値より 1 大きい値を発行する。IF-002 を受けたときは、送信の `controlSeq` と最新値を比較し、一致する場合だけイベントを受理して、`eventSeq` を付ける。
 - **事前条件**: Room が存在すること。F-008 の検証が済んでいること。
-- **事後条件**: 発行した `controlSeq` は、同じ Room の中で一意に増加する。受理したイベントは、`eventSeq` の順で並ぶ。同じ `eventId` を再受信しても、二重に追加しない（最初の `eventSeq` を返す）。
+- **事後条件**: 発行した `controlSeq` は、同じ Room の中で一意に増加する。受理したイベントは、`eventSeq` の順で並ぶ。同じ端末（`targetId`）の同じ `eventId` を再受信しても、二重に追加しない（最初の `eventSeq` を返す）。`eventId` は端末内で一意なので（§2.3）、重複の判定は `(targetId, eventId)` の組で行い、別の端末の同じ `eventId` は、別のイベントとして追加する。1つのリクエストの中で同じ `eventId` が重複した場合も、同じ扱いにする。
+- **応答の保持**: IF-006 の `requestId` ごとの最初の応答（V-08）は、**成功した応答だけ**を保持する。エラー（`TARGET_OFFLINE`、`LOCK_NOT_HELD` など）は、状態を変えないので保持せず、同じ `requestId` の再送は、再判定する（状態が変わった後に、再送が成功できる）。この前提として、クライアントは、IF-006 を同時に1件だけ再試行する（古い要求の再送が、新しい変更を、後から上書きしないため）。
+- **通知の失敗**: 通知（IF-003）の listener が例外を投げても、状態の更新は済んでいるので、呼び出し元にはエラーを返さず、他の listener への通知を続ける。例外は、実装が受け取る処理（既定は標準エラーへの出力）に渡す。
+- **既知の制限（v0.1）**: メモリ上の状態のうち、`eventId` の記録（`events`）は、ログの圧縮（#6）まで削除しない。Room を削除する操作は、提供しない（Room を作り直すと、`controlSeq` が初期値から振り直され、クライアントの Control Store が、古い応答として捨てるため。Room のライフサイクルは、`controlSeq` の扱いと合わせて、#6 の検討の範囲とする）。期限が切れた presence は、`tick()` で削除する（オンライン判定の結果は変わらない）。
 - **外部公開時の互換性・認証**: [IF/API仕様書](./CSU-IF-001_IF仕様書.md) の IF-002、IF-005、IF-006 に従う。
 
 #### 機能契約（機能ID: F-006）
@@ -380,3 +383,4 @@ sequenceDiagram
 | Rev.1.0 | 2026-11-28 | xzyozi | 新規作成（初版制定）。IF-006 の処理順序（F-008、F-006、F-007、F-005）を明記。BD・IF が「DD で定める」とした TTL、再試行、`sendFilter`、`requestId` の保持期間、イベントの再評価、`eventSeq` の範囲を確定。                                                                                                                                                                                                                                                              |
 | Rev.1.1 | 2026-11-28 | xzyozi | 機能テスト要件（TR-101〜TR-120）の「対応テストケース」に、テスト計画・結果報告書（CSU-TEST-001）のケース ID（TC-101〜TC-120）を記入。                                                                                                                                                                                                                                                                                                                                   |
 | Rev.1.2 | 2026-11-28 | xzyozi | 実装（`core`）に合わせた更新。F-001: 二重追記は追記済みとして扱い（状態を更新せず、現在の状態を返す）、`createdAt` の既定値を追記時の時刻とすることを明記（DS §3.2、DD §2.3 に合わせた）。F-002: `controlSeq` は 0 以上の整数とし、NaN などは `RangeError` とする前提を追加（NaN を受け入れると古い応答も反映されるため）。F-003: Outbox は `StoragePort` から未送信のイベントを直接読むため、非同期で、呼び出し先を `StoragePort` と F-002 に変更（BD C-003 も同様）。 |
+| Rev.1.3 | 2026-11-28 | xzyozi | `relay` の実装に合わせた更新。F-005: `eventId` の重複判定を `(targetId, eventId)` の組に変更（`eventId` は端末内で一意）。IF-006 の応答は成功した場合だけ保持し、クライアントは IF-006 を同時に1件だけ再試行する前提を明記。通知の listener の失敗は、呼び出し元に返さない。既知の制限（`events` は #6 まで削除しない、Room の削除は提供しない）を追記。                                                                                                                |
