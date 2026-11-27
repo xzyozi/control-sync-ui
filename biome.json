@@ -1,0 +1,17 @@
+{
+  "files": {
+    "ignore": ["**/dist/**", "**/node_modules/**", "package-lock.json"]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "organizeImports": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true
+    }
+  }
+}

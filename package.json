@@ -1,0 +1,19 @@
+{
+  "name": "control-sync-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UI非依存の状態同期基盤（v0.1 MVP）",
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "lint": "biome lint .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
