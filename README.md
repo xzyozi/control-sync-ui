@@ -6,7 +6,7 @@
 
 ## ドキュメント
 
-- [最小要件定義書（v0.1 MVP）](docs/features/REQUIREMENTS.md)
+- [最小要件定義書（v0.1 MVP）](docs/features/CSU-REQ-001_最小要件定義書.md)
 - [ドキュメントガバナンス](docs/README.md)
 - [用語集](CONTEXT.md)
 - [Git Flow 運用規約](docs/setup/git_flow_and_branch_policy.md)

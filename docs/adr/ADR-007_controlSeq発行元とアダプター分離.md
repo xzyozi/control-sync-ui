@@ -14,12 +14,12 @@ purpose: "controlSeqの発行元と、IndexedDBアダプターの置き場所に
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
   - "用語集（相対パス: ../../CONTEXT.md）"
-  - "最小要件定義書（相対パス: ../features/REQUIREMENTS.md）"
+  - "最小要件定義書（相対パス: ../features/CSU-REQ-001_最小要件定義書.md）"
 ---
 
 # ADR-007: controlSeq発行元とストレージアダプターのパッケージ分離
 
-> 現在の仕様の正本は [最小要件定義書](../features/REQUIREMENTS.md) と、今後作成する基本設計書（BD）、IF/API仕様書である。本書は判断理由の記録である。
+> 現在の仕様の正本は [最小要件定義書](../features/CSU-REQ-001_最小要件定義書.md) と、今後作成する基本設計書（BD）、IF/API仕様書である。本書は判断理由の記録である。
 
 | 項目           | 内容       |
 | :------------- | :--------- |
@@ -65,7 +65,7 @@ related_documents:
 
 ## 5. 関連文書・後続作業
 
-- **要求・Issue**: [最小要件定義書](../features/REQUIREMENTS.md) の OP-01、OP-04。
+- **要求・Issue**: [最小要件定義書](../features/CSU-REQ-001_最小要件定義書.md) の OP-01、OP-04。
 - **現在の仕様**: 要件定義書の FR-02、FR-04、CN-01、CN-02。BD とIF/API仕様書は今後作成する。
 - **実装・検証タスク**: なし。
 - **後続ADR**: なし。

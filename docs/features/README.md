@@ -6,20 +6,23 @@ ssot_scope: "features_directory_operation"
 status: "draft"
 version: "1.0"
 created_at: "2026-10-23"
-updated_at: "2026-10-23"
-author: "[作成者 / チーム名]"
-owner: "[責任者 / チーム名]"
+updated_at: "2026-11-28"
+author: "xzyozi"
+owner: "xzyozi"
 purpose: "要求・機能仕様の管理先をIssueと docs/features/ で使い分けるフォールバック方針を示すため"
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
   - "ADR-001 文書ガバナンスとSSOT（相対パス: ../adr/001-document-governance-and-ssot.md）"
   - "課題記録テンプレート（相対パス: ./TEMPLATE/TEMPLATE_課題記録.md）"
+  - "REQ テンプレート（相対パス: ./TEMPLATE/TEMPLATE_要件定義書.md）"
   - "Git Flow 運用規約（相対パス: ../setup/git_flow_and_branch_policy.md）"
 ---
 
 # docs/features 運用方針
 
 `docs/features/` は、要求・機能仕様の**フォールバック先**として運用する。Issueで管理できるものはIssueを正とし、Issueで管理できないものだけをここに置く。
+
+**例外: 正式な要求定義（REQ）**は、Issueの可否にかかわらず、`docs/features/` を正本とする。REQ は、プロジェクトの目的、要求、受け入れ条件、対象外を定義する形式文書（`TYPE_CODE`: `REQ`）で、[`docs/README.md`](../README.md) の「要求・機能仕様」の正本である。REQ の作成には、[REQ テンプレート](./TEMPLATE/TEMPLATE_要件定義書.md) を使う。後続課題、議論、個別の機能の追加は、引き続き Issue で管理し、REQ からはリンクで参照する（Issue の内容を REQ に重複して書かない）。
 
 ## 1. 基本方針
 
@@ -84,14 +87,15 @@ Issueには、反映先へのリンクを残す。
 
 ## 4. 命名と置き場所の早見表
 
-| ケース                                        | 置き場所                               | 例                                |
-| :-------------------------------------------- | :------------------------------------- | :-------------------------------- |
-| Git管理下かつ `gh` 等が使える新機能           | Issue                                  | `#123 ログイン機能の追加`         |
-| 上記でIssueを写す                             | `docs/features/ISSUE-<番号>_<題名>.md` | `ISSUE-123_ログイン機能の追加.md` |
-| Git管理外、または `gh` 等が使えない要望・要求 | `docs/features/<題名>.md`              | `帳票出力の要望.md`               |
+| ケース                                        | 置き場所                                      | 例                                |
+| :-------------------------------------------- | :-------------------------------------------- | :-------------------------------- |
+| Git管理下かつ `gh` 等が使える新機能           | Issue                                         | `#123 ログイン機能の追加`         |
+| 上記でIssueを写す                             | `docs/features/ISSUE-<番号>_<題名>.md`        | `ISSUE-123_ログイン機能の追加.md` |
+| Git管理外、または `gh` 等が使えない要望・要求 | `docs/features/<題名>.md`                     | `帳票出力の要望.md`               |
+| 正式な要求定義（REQ）                         | `docs/features/<PREFIX>-REQ-<番号>_<題名>.md` | `CSU-REQ-001_最小要件定義書.md`   |
 
 ## 5. 注意事項
 
 - 同じ要求をIssueと `docs/features/` の両方で更新し続けない。正本を1つに決める。
 - 機密情報、認証情報、利用者固有の情報を転記しない。
-- `REQ`（正式な要求・機能仕様書）のテンプレートは未整備である。必要になった時点で、ガバナンスの規約に従い `TEMPLATE/` に追加する。
+- `REQ`（正式な要求・機能仕様書）のテンプレートは、`TEMPLATE/TEMPLATE_要件定義書.md` である。
