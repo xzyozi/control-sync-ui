@@ -12,17 +12,21 @@ export class FakeClock {
   }
 }
 
-let requestCounter = 0;
-
-/** 共通項目（schemaVersion は "1"）。requestId は、呼び出しごとに新しい値。 */
-export function env(overrides: Partial<Envelope> = {}): Envelope {
-  requestCounter += 1;
-  return {
-    schemaVersion: "1",
-    requestId: `req-${requestCounter}`,
-    ...overrides,
+/** 呼び出しごとに、新しい requestId を作る共通項目の生成器（schemaVersion は "1"）。 */
+export function createEnv(): (overrides?: Partial<Envelope>) => Envelope {
+  let counter = 0;
+  return (overrides = {}) => {
+    counter += 1;
+    return {
+      schemaVersion: "1",
+      requestId: `req-${counter}`,
+      ...overrides,
+    };
   };
 }
+
+/** テスト全体で使う、共通項目の生成器。requestId は、呼び出しごとに新しい値。 */
+export const env = createEnv();
 
 export interface Fixture {
   clock: FakeClock;
@@ -50,19 +54,6 @@ export function goOnline(
   return received;
 }
 
-/** 呼び出しが RelayError を投げた場合に、その code を返す。投げなければ undefined。 */
-export function errorCodeOf(call: () => unknown): string | undefined {
-  try {
-    call();
-    return undefined;
-  } catch (error) {
-    if (error instanceof RelayError) {
-      return error.code;
-    }
-    throw error;
-  }
-}
-
 /** 呼び出しが投げた RelayError を返す。投げなければ undefined。 */
 export function errorOf(call: () => unknown): RelayError | undefined {
   try {
@@ -74,6 +65,11 @@ export function errorOf(call: () => unknown): RelayError | undefined {
     }
     throw error;
   }
+}
+
+/** 呼び出しが RelayError を投げた場合に、その code を返す。投げなければ undefined。 */
+export function errorCodeOf(call: () => unknown): string | undefined {
+  return errorOf(call)?.code;
 }
 
 export const ALL_FILTER = { mode: "ALL" } as const;

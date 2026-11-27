@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ALL_FILTER, createFixture, env, errorCodeOf, goOnline } from "./helpers";
 import type { RelayCore } from "../src/index";
+import {
+  ALL_FILTER,
+  createFixture,
+  env,
+  errorCodeOf,
+  errorOf,
+  goOnline,
+} from "./helpers";
 
 /** IF-001〜IF-006 を、与えた共通項目で呼ぶ。 */
 function callAll(relay: RelayCore, makeEnv: () => ReturnType<typeof env>): (() => unknown)[] {
@@ -25,10 +32,12 @@ function callAll(relay: RelayCore, makeEnv: () => ReturnType<typeof env>): (() =
 }
 
 describe("共通項目の検証（F-008）", () => {
-  it("TC-007 / TC-114: schemaVersion が一致しないと SCHEMA_VERSION_MISMATCH で、サーバーの状態は変化しない", () => {
+  it("TC-007 / TC-114: schemaVersion が一致しないと SCHEMA_VERSION_MISMATCH（HTTP 400）で、サーバーの状態は変化しない", () => {
     const { relay } = createFixture();
     for (const call of callAll(relay, () => env({ schemaVersion: "2" }))) {
-      expect(errorCodeOf(call)).toBe("SCHEMA_VERSION_MISMATCH");
+      const error = errorOf(call);
+      expect(error?.code).toBe("SCHEMA_VERSION_MISMATCH");
+      expect(error?.httpStatus).toBe(400);
     }
     const snapshot = relay.getControl("room-a", { targetId: "t1" }, env());
     expect(snapshot.controlSeq).toBe(0);
@@ -45,9 +54,16 @@ describe("共通項目の検証（F-008）", () => {
     ];
     for (const overrides of missing) {
       for (const call of callAll(relay, () => env(overrides))) {
-        expect(errorCodeOf(call)).toBe("INVALID_MESSAGE");
+        const error = errorOf(call);
+        expect(error?.code).toBe("INVALID_MESSAGE");
+        expect(error?.httpStatus).toBe(400);
       }
     }
+
+    // 検証に失敗した受信は、他の機能を呼び出さず、状態は変わらない（TC-114）。
+    const snapshot = relay.getControl("room-a", { targetId: "t1" }, env());
+    expect(snapshot.controlSeq).toBe(0);
+    expect(snapshot.control).toEqual({ sendFilter: { mode: "NONE" }, holderId: null });
   });
 
   it("共通項目の検証は、Room の確認より先に行う（不一致の schemaVersion は、存在しない Room でも SCHEMA_VERSION_MISMATCH）", () => {

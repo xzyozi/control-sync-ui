@@ -48,6 +48,59 @@ describe("IF-002 イベントの送信", () => {
     expect(next.accepted).toEqual([{ eventId: "e2", eventSeq: 2 }]);
   });
 
+  it("eventId は端末ごとに判定する。別の端末の同じ eventId は、別のイベントとして追加される", () => {
+    const { relay } = createFixture();
+    const push = (targetId: string, eventId: string) =>
+      relay.pushEvents(
+        "room-a",
+        { targetId, controlSeq: 0, events: [event(eventId)] },
+        env(),
+      ).accepted;
+
+    expect(push("t1", "e1")).toEqual([{ eventId: "e1", eventSeq: 1 }]);
+    // 別の端末（t2）の同じ eventId は、別のイベント（eventSeq 2）。
+    expect(push("t2", "e1")).toEqual([{ eventId: "e1", eventSeq: 2 }]);
+    // 同じ端末（t1）の再送は、最初の eventSeq を返し、二重に追加しない。
+    expect(push("t1", "e1")).toEqual([{ eventId: "e1", eventSeq: 1 }]);
+    expect(push("t2", "e2")).toEqual([{ eventId: "e2", eventSeq: 3 }]);
+  });
+
+  it("1つのリクエストの中で同じ eventId が重複しても、二重に追加されず、最初の eventSeq を返す", () => {
+    const { relay } = createFixture();
+    const result = relay.pushEvents(
+      "room-a",
+      { targetId: "t1", controlSeq: 0, events: [event("e1"), event("e2"), event("e1")] },
+      env(),
+    );
+    expect(result.accepted).toEqual([
+      { eventId: "e1", eventSeq: 1 },
+      { eventId: "e2", eventSeq: 2 },
+      { eventId: "e1", eventSeq: 1 },
+    ]);
+  });
+
+  it("通知の listener が例外を投げても、処理は成功し、他の listener に通知され、onListenerError に渡される", () => {
+    const errors: unknown[] = [];
+    const { relay } = createFixture({ onListenerError: (error) => errors.push(error) });
+    const received: unknown[] = [];
+    relay.connect(
+      "room-a",
+      { targetId: "t1" },
+      () => {
+        throw new Error("listener failed");
+      },
+      env(),
+    );
+    relay.connect("room-a", { targetId: "t2" }, (n) => received.push(n), env());
+
+    // lease の取得（状態の更新）は、listener の失敗に関係なく成功する。
+    const result = relay.lease("room-a", { operatorId: "op-1", action: "ACQUIRE" }, env());
+    expect(result).toEqual({ holderId: "op-1", controlSeq: 1 });
+    expect(received).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).message).toBe("listener failed");
+  });
+
   it("TC-003: 古い controlSeq は STALE_CONTROL_SEQ（最新値つき）、大きい値は INVALID_MESSAGE。いずれもイベントは追加されない", () => {
     const { relay } = createFixture();
     goOnline(relay, "room-a", "t1");
@@ -67,6 +120,7 @@ describe("IF-002 イベントの送信", () => {
       ),
     );
     expect(stale?.code).toBe("STALE_CONTROL_SEQ");
+    expect(stale?.httpStatus).toBe(409);
     expect(stale?.controlSeq).toBe(latest);
 
     // サーバーが発行していない、大きい値。

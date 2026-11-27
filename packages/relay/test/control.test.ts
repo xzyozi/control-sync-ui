@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ALL_FILTER, TYPES_FILTER, createFixture, env, errorCodeOf, goOnline } from "./helpers";
+import {
+  ALL_FILTER,
+  TYPES_FILTER,
+  createFixture,
+  env,
+  errorCodeOf,
+  errorOf,
+  goOnline,
+} from "./helpers";
 import type { Fixture } from "./helpers";
 
 /** op-1 が lease を保持し、t1 がオンラインの状態を作る。 */
@@ -49,14 +57,32 @@ describe("IF-006 送信対象フィルタの変更", () => {
     expect(after.control.sendFilter).toEqual({ mode: "NONE" });
   });
 
-  it("TC-118: 判定の順序は、ロック、オンライン判定の順（保持者でなければ、オフラインより先に LOCK_NOT_HELD）", () => {
+  it("TC-118: 判定の順序は、ロック、オンライン判定、発行の順。拒否では controlSeq が発行されず、成功は保持者でオンラインの場合だけ", () => {
     const fixture = ready();
-    // t9 は、オフライン。
+    const seq = () =>
+      fixture.relay.getControl("room-a", { targetId: "t1" }, env()).controlSeq;
+    const before = seq();
+
+    // 保持者でなければ、オフラインより先に LOCK_NOT_HELD（t9 は、オフライン）。
     expect(errorCodeOf(() => change(fixture, { operatorId: "op-2", targetId: "t9" }))).toBe(
       "LOCK_NOT_HELD",
     );
     // 保持者でも、オフラインなら TARGET_OFFLINE。
     expect(errorCodeOf(() => change(fixture, { targetId: "t9" }))).toBe("TARGET_OFFLINE");
+    // どちらの拒否でも、controlSeq は発行されない。
+    expect(seq()).toBe(before);
+
+    // 保持者で、かつオンラインなら、成功する（controlSeq が発行される）。
+    expect(change(fixture, { targetId: "t1" }).controlSeq).toBe(before + 1);
+  });
+
+  it("エラーの HTTP ステータス: LOCK_NOT_HELD は 403、TARGET_OFFLINE は 409、INVALID_MESSAGE は 400", () => {
+    const fixture = ready();
+    expect(errorOf(() => change(fixture, { operatorId: "op-2" }))?.httpStatus).toBe(403);
+    expect(errorOf(() => change(fixture, { targetId: "t9" }))?.httpStatus).toBe(409);
+    expect(errorOf(() => change(fixture, { sendFilter: { mode: "SOME" } }))?.httpStatus).toBe(
+      400,
+    );
   });
 
   it("TC-006 / TC-113: 接続がない、または presence の期限が切れた端末は TARGET_OFFLINE で、変更は適用されない", () => {

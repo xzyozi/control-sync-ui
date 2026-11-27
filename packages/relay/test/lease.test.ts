@@ -1,25 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { ALL_FILTER, createFixture, env, errorCodeOf, goOnline } from "./helpers";
+import {
+  ALL_FILTER,
+  createFixture,
+  env,
+  errorCodeOf,
+  errorOf,
+  goOnline,
+} from "./helpers";
 
 describe("lease と controlSeq の発行", () => {
-  it("TC-010 / TC-111: 保持者が変わる操作だけが controlSeq を発行する", () => {
-    const { relay } = createFixture();
+  it("TC-010 / TC-111: 保持者が変わる操作だけが、controlSeq を発行し、通知される（取得、更新、再取得、解放、期限切れを、順に行う）", () => {
+    const { relay, clock } = createFixture();
+    const received = goOnline(relay, "room-a", "t1");
     const seq = () => relay.getControl("room-a", { targetId: "t1" }, env()).controlSeq;
+    const acquire = (operatorId: string) =>
+      relay.lease("room-a", { operatorId, action: "ACQUIRE" }, env());
+    const updates = () => received.filter((n) => n.type === "CONTROL_UPDATED").length;
 
     expect(seq()).toBe(0);
 
-    // 新しい ACQUIRE は発行する。
-    expect(relay.lease("room-a", { operatorId: "op-1", action: "ACQUIRE" }, env()))
-      .toEqual({ holderId: "op-1", controlSeq: 1 });
+    // 新しい ACQUIRE は、発行し、通知する。
+    expect(acquire("op-1")).toEqual({ holderId: "op-1", controlSeq: 1 });
+    expect(updates()).toBe(1);
 
-    // 同じ操作者の ACQUIRE（更新として扱う）と RENEW は、発行しない。
-    relay.lease("room-a", { operatorId: "op-1", action: "ACQUIRE" }, env());
+    // 同じ操作者の ACQUIRE（更新として扱う）と RENEW は、発行も通知もしない。
+    acquire("op-1");
     relay.lease("room-a", { operatorId: "op-1", action: "RENEW" }, env());
     expect(seq()).toBe(1);
+    expect(updates()).toBe(1);
 
-    // RELEASE は発行する。
+    // RELEASE は、発行し、通知する。
     expect(relay.lease("room-a", { operatorId: "op-1", action: "RELEASE" }, env()))
       .toEqual({ holderId: null, controlSeq: 2 });
+    expect(updates()).toBe(2);
+
+    // 別の操作者が取得し、期限切れで解放される。どちらも、発行し、通知する。
+    acquire("op-2");
+    expect(seq()).toBe(3);
+    clock.advance(30_000);
+    relay.tick();
+    expect(seq()).toBe(4);
+    expect(updates()).toBe(4);
+    expect(received.every((n) => n.type === "CONTROL_UPDATED")).toBe(true);
   });
 
   it("別の操作者の ACQUIRE は LOCK_HELD_BY_OTHER で、状態は変わらない", () => {
@@ -50,11 +72,53 @@ describe("lease と controlSeq の発行", () => {
     ).toBe("LOCK_NOT_HELD");
   });
 
-  it("不正な action は INVALID_MESSAGE", () => {
+  it("不正な action は INVALID_MESSAGE（HTTP 400）で、状態は変わらない", () => {
     const { relay } = createFixture();
+    for (const action of ["STEAL", "", "acquire"]) {
+      const error = errorOf(() =>
+        relay.lease("room-a", { operatorId: "op-1", action }, env()),
+      );
+      expect(error?.code).toBe("INVALID_MESSAGE");
+      expect(error?.httpStatus).toBe(400);
+    }
+    expect(relay.getControl("room-a", { targetId: "t1" }, env()).controlSeq).toBe(0);
+  });
+
+  it("LOCK_HELD_BY_OTHER は HTTP 409、LOCK_NOT_HELD は HTTP 403", () => {
+    const { relay } = createFixture();
+    relay.lease("room-a", { operatorId: "op-1", action: "ACQUIRE" }, env());
+
     expect(
-      errorCodeOf(() => relay.lease("room-a", { operatorId: "op-1", action: "STEAL" }, env())),
-    ).toBe("INVALID_MESSAGE");
+      errorOf(() => relay.lease("room-a", { operatorId: "op-2", action: "ACQUIRE" }, env()))
+        ?.httpStatus,
+    ).toBe(409);
+    expect(
+      errorOf(() => relay.lease("room-a", { operatorId: "op-2", action: "RENEW" }, env()))
+        ?.httpStatus,
+    ).toBe(403);
+  });
+
+  it("tick は、期限が切れた presence を削除するが、オンライン判定の結果は変えない", () => {
+    const { relay, clock } = createFixture();
+    goOnline(relay, "room-a", "t1");
+    relay.lease("room-a", { operatorId: "op-1", action: "ACQUIRE" }, env());
+    const change = () =>
+      relay.changeControl(
+        "room-a",
+        { operatorId: "op-1", targetId: "t1", sendFilter: ALL_FILTER },
+        env(),
+      );
+
+    clock.advance(15_000);
+    // presence が期限切れでも、tick の前後で、判定は同じ（TARGET_OFFLINE）。
+    expect(errorCodeOf(change)).toBe("TARGET_OFFLINE");
+    relay.tick();
+    relay.lease("room-a", { operatorId: "op-1", action: "RENEW" }, env());
+    expect(errorCodeOf(change)).toBe("TARGET_OFFLINE");
+
+    // presence を送り直せば、再びオンライン。
+    relay.presence("room-a", { targetId: "t1" }, env());
+    expect(change().controlSeq).toBeGreaterThan(0);
   });
 
   it("TC-005 / TC-112: 期限の時刻に解放され、controlSeq の発行と通知が行われ、別の操作者が取得できる", () => {
