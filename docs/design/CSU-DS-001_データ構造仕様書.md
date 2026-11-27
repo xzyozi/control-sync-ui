@@ -139,7 +139,7 @@ erDiagram
 IndexedDB は、ファイルのような一時ファイルと置換を使わない。代わりに、トランザクションの原子性を使う。
 
 1. **追記**（`StoragePort.append`）: `events` へのレコード追加と、`delivery`（`PENDING`。`roomId` と `localSeq` を複製）の作成を、**1つの読み書きトランザクション**で行う。どちらかが失敗した場合は、両方を取り消す（ブラウザが保証する）。
-2. **送信状態の更新**（`StoragePort.markSent`）: `PENDING` → `SENT` の更新は、1つのトランザクションで、`eventSeq` と `updatedAt` と一緒に行う。
+2. **送信状態の更新**（`StoragePort.markSent`）: `PENDING` → `SENT` の更新は、1つのトランザクションで、`eventSeq` と `updatedAt` と一緒に行う。すでに `SENT` のイベントに対する `markSent` は、何もしない（冪等。最初の `eventSeq` を保持する）。`events` に存在しない `eventId` を指定した場合は、エラーとして失敗を返す。メモリ上の参照実装（`InMemoryStoragePort`）は、永続化をしないため、`updatedAt` を持たない（この項の `updatedAt` は、IndexedDB の実装の仕様である）。
 3. **完了の確認**: 呼び出し元への成功の通知は、トランザクションの `complete` イベントの後に行う。`abort` と `error` のときは、失敗を返す（DD F-001、`StoragePort` の失敗は状態を更新しない）。
 4. **更新と削除の禁止**: `events` のレコードは、追記だけで、更新も削除もしない。更新できるのは、`delivery` の `status` と `eventSeq` と `updatedAt`（`PENDING` → `SENT` の一方向）だけで、`delivery` も削除しない。
 5. **復旧確認**: データベースを開くときに、`meta.storageVersion` を読み、4.1 の判定を行う。`events` にあって `delivery` にないイベントがある場合は、1.のトランザクションが守っているため起こらない。起きた場合は、破損として扱い、エラーを返して、自動修復はしない。
