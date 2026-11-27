@@ -5,9 +5,9 @@ document_number: "CSU-IF-001"
 document_role: "normative"
 ssot_scope: "external_interface"
 status: "draft"
-version: "1.2"
+version: "1.3"
 created_at: "2026-11-26"
-updated_at: "2026-11-27"
+updated_at: "2026-11-28"
 author: "xzyozi"
 owner: "xzyozi"
 purpose: "対象端末、外部PC、サーバーのあいだで合意する接続契約（HTTP と SSE のメッセージ、エラー、バージョン管理）を定義し、境界を越える受け渡しの不整合を防ぐため"
@@ -16,6 +16,8 @@ related_documents:
   - "最小要件定義書（相対パス: ../features/REQUIREMENTS.md）"
   - "CSU-BD-001 基本設計書正本（相対パス: ./CSU-BD-001_基本設計書.md）"
   - "ADR-007 controlSeq発行元とストレージアダプターのパッケージ分離（相対パス: ../adr/ADR-007_controlSeq発行元とアダプター分離.md）"
+  - "CSU-DD-001 詳細設計書正本（相対パス: ./CSU-DD-001_詳細設計書.md）"
+  - "CSU-DS-001 データ構造仕様書正本（相対パス: ./CSU-DS-001_データ構造仕様書.md）"
 ---
 
 # IF/API仕様書（外部インターフェース契約）
@@ -36,8 +38,8 @@ related_documents:
 
 - **本書の正本範囲**: `external_interface`。システム境界を越えるメッセージ、エンドポイント、エラーコード、互換性の正本とする。
 - **BDとの関係**: 境界の位置、ロックとオフラインの判定をサーバーが行う方針、制御状態を Room 単位で持つ方針（D-01、D-02、D-04、D-06）は [基本設計書](./CSU-BD-001_基本設計書.md) を正本とする。本書はそれを接続契約へ具体化する。
-- **DDとの関係**: 内部の DTO、制御フロー、状態遷移、TTL の具体値、lease の期限の検出方法は DD（未作成）を正本とする。DD の作成後に、機能IDとの対応を追加する。
-- **DSとの関係**: 保存後の形式は DS（未作成）を正本とする。本書は受信形式だけを定義する。
+- **DDとの関係**: 内部の DTO、制御フロー、状態遷移、TTL の具体値、lease の期限の検出方法は [DD](./CSU-DD-001_詳細設計書.md) を正本とする。機能IDとの対応は、2.1 の表に示す。
+- **DSとの関係**: 保存後の形式は [DS](./CSU-DS-001_データ構造仕様書.md) を正本とする。本書は受信形式だけを定義する。
 - **要件定義書との関係**: FR-04 の「Pull と Push は HTTP、更新通知は SSE」の記述は、本書を正本とする。要件定義書側は、後続の改訂で参照だけにする（#11）。
 - **責務の対象外**: TTL と再試行の具体値、サーバー内部の順序付けの実装。
 - **矛盾時の扱い**: 文書の更新日ではなく、該当する `ssot_scope` の正本を更新し、関連文書を追従させる。
@@ -48,14 +50,14 @@ related_documents:
 
 ### 2.1 インターフェース一覧
 
-| IF-ID  | インターフェース名       | 方向                | 方式                 | エンドポイント                  | 対応するDD機能ID | 状態 |
-| :----- | :----------------------- | :------------------ | :------------------- | :------------------------------ | :--------------- | :--- |
-| IF-001 | 制御状態の取得（Pull）   | 対象端末 → サーバー | HTTP `GET`           | `/rooms/{roomId}/control`       | 未作成           | 計画 |
-| IF-002 | イベントの送信（Push）   | 対象端末 → サーバー | HTTP `POST`          | `/rooms/{roomId}/events`        | 未作成           | 計画 |
-| IF-003 | 更新通知                 | サーバー → 対象端末 | SSE（`GET`、片方向） | `/rooms/{roomId}/notifications` | 未作成           | 計画 |
-| IF-004 | presence heartbeat       | 対象端末 → サーバー | HTTP `POST`          | `/rooms/{roomId}/presence`      | 未作成           | 計画 |
-| IF-005 | lease の取得・更新・解放 | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/lease`         | 未作成           | 計画 |
-| IF-006 | 送信対象フィルタの変更   | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/control`       | 未作成           | 計画 |
+| IF-ID  | インターフェース名       | 方向                | 方式                 | エンドポイント                  | 対応するDD機能ID           | 状態 |
+| :----- | :----------------------- | :------------------ | :------------------- | :------------------------------ | :------------------------- | :--- |
+| IF-001 | 制御状態の取得（Pull）   | 対象端末 → サーバー | HTTP `GET`           | `/rooms/{roomId}/control`       | F-002、F-004、F-008        | 計画 |
+| IF-002 | イベントの送信（Push）   | 対象端末 → サーバー | HTTP `POST`          | `/rooms/{roomId}/events`        | F-003、F-004、F-005、F-008 | 計画 |
+| IF-003 | 更新通知                 | サーバー → 対象端末 | SSE（`GET`、片方向） | `/rooms/{roomId}/notifications` | F-004、F-005、F-008        | 計画 |
+| IF-004 | presence heartbeat       | 対象端末 → サーバー | HTTP `POST`          | `/rooms/{roomId}/presence`      | F-004、F-007、F-008        | 計画 |
+| IF-005 | lease の取得・更新・解放 | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/lease`         | F-005、F-006、F-008        | 計画 |
+| IF-006 | 送信対象フィルタの変更   | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/control`       | F-005、F-007、F-008        | 計画 |
 
 IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat）とは、送り手も意味も異なる別のインターフェースである（BD D-02）。`{roomId}` はパスパラメータで、以降の表では「パス」と示す。
 
@@ -378,3 +380,4 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | Rev.1.0 | 2026-11-26 | xzyozi | 新規作成（初版制定）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Rev.1.1 | 2026-11-27 | xzyozi | レビュー指摘の反映。エンドポイント、HTTP ステータス、共通項目の載せ場所（SSE はクエリパラメータ）、共通エラー形式を追加。lease による保持者の変更でも `controlSeq` を発行し、通知する（IF-005）。IF-006 を「送信対象フィルタの変更」に絞り、`targetId` の意味と他の端末の扱いを明記。IF-002 の `controlSeq` を最新値との一致に変更。TR-008 を書き直し、TR-010〜TR-013 を追加。                                                                                                                                  |
 | Rev.1.2 | 2026-11-27 | xzyozi | レビュー指摘の反映。IF-003: 接続エラーの原因は IF-001 の応答で判別すること、`requestId` は接続単位で自動再接続でも再利用してよいこと、`open` のたびに IF-001 を実行することを追記。IF-004: SSE の接続がなくても受け付けることを明記。IF-006: 再試行は同じ `X-Request-Id` を使い、重複時は最初の応答と同じ `controlSeq` を返すことを追記。TR-008 の対象 IF に IF-005、IF-006 を追加。TR-009 を `open` のたびの実行に合わせた。IF-003: 接続が `CLOSED` になったときは IF-001 を実行して原因を判別することを追記。 |
+| Rev.1.3 | 2026-11-28 | xzyozi | DD（CSU-DD-001）、DS（CSU-DS-001）の作成に伴い、IF と DD の機能 ID の対応を追加。DD で確定した値（TTL、再試行、`requestId` の保持期間）は DD を正本とする。                                                                                                                                                                                                                                                                                                                                                     |
