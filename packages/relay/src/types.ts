@@ -30,7 +30,15 @@ export interface Notification {
 
 export type NotificationListener = (notification: Notification) => void;
 
+/** lease の操作（IF-005）。 */
+export type LeaseAction = "ACQUIRE" | "RENEW" | "RELEASE";
+
 export interface RelayOptions {
+  /**
+   * 通知の listener が例外を投げたときに呼ぶ。状態の更新は済んでいるので、
+   * 例外は呼び出し元に返さず、ここへ渡す。省略した場合は、標準エラーに出力する。
+   */
+  readonly onListenerError?: (error: unknown) => void;
   /** 現在時刻（ミリ秒）の供給元。テストで固定できる。 */
   readonly now?: () => number;
   readonly schemaVersion?: string;

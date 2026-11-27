@@ -7,6 +7,7 @@ export type {
   ControlSnapshot,
   ControlState,
   Envelope,
+  LeaseAction,
   LeaseResult,
   Notification,
   NotificationListener,

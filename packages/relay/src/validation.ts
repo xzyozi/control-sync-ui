@@ -1,5 +1,16 @@
 import { RelayError } from "./errors";
-import type { SendFilter } from "./types";
+import type { LeaseAction, SendFilter } from "./types";
+
+/** lease の操作を検証する（IF §4.5.1）。そうでなければ INVALID_MESSAGE。 */
+export function parseLeaseAction(value: unknown): LeaseAction {
+  if (value !== "ACQUIRE" && value !== "RENEW" && value !== "RELEASE") {
+    throw new RelayError(
+      "INVALID_MESSAGE",
+      "action must be ACQUIRE, RENEW or RELEASE",
+    );
+  }
+  return value;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

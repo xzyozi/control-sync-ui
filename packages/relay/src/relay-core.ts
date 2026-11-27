@@ -13,10 +13,20 @@ import type {
 } from "./types";
 import {
   isRecord,
+  parseLeaseAction,
   parseSendFilter,
   requireSeq,
   requireString,
 } from "./validation";
+
+// lib に DOM を含めず、@types/node にも依存しないため、使う分だけを宣言する。
+// 実行時は、グローバルの console を指す。
+declare const console: { error: (...data: unknown[]) => void };
+
+/** 端末ごとに一意な eventId のキー（DD §2.3: eventId は端末内で一意）。 */
+function eventKey(targetId: string, eventId: string): string {
+  return `${targetId}\u0000${eventId}`;
+}
 
 interface RoomState {
   controlSeq: number;
@@ -25,6 +35,7 @@ interface RoomState {
   leaseExpiresAt: number | null;
   /** 同じ Room の中で、一意に増加する（DD V-10）。 */
   eventSeq: number;
+  /** (targetId, eventId) ごとの eventSeq。ログの圧縮（#6）までは、削除しない。 */
   events: Map<string, number>;
   /** targetId ごとの presence の期限（ミリ秒）。 */
   presence: Map<string, number>;
@@ -48,8 +59,12 @@ export class RelayCore {
   private readonly leaseTtlMs: number;
   private readonly presenceTtlMs: number;
   private readonly requestIdRetentionMs: number;
+  private readonly onListenerError: (error: unknown) => void;
 
   constructor(options: RelayOptions = {}) {
+    this.onListenerError =
+      options.onListenerError ??
+      ((error) => console.error("[relay] listener failed:", error));
     this.now = options.now ?? (() => Date.now());
     this.schemaVersion = options.schemaVersion ?? DEFAULTS.schemaVersion;
     this.leaseTtlMs = options.leaseTtlMs ?? DEFAULTS.leaseTtlMs;
@@ -76,10 +91,20 @@ export class RelayCore {
     });
   }
 
-  /** 期限を過ぎた lease を解放する（DD V-09）。 */
+  /**
+   * 期限を過ぎた lease を解放し（DD V-09）、期限が切れた presence を削除する。
+   * 期限切れの presence は、もともとオフラインと判定されるので、削除しても、
+   * 判定の結果は変わらない。
+   */
   tick(): void {
+    const now = this.now();
     for (const room of this.rooms.values()) {
       this.expireLease(room);
+      for (const [targetId, expiresAt] of room.presence) {
+        if (expiresAt <= now) {
+          room.presence.delete(targetId);
+        }
+      }
     }
   }
 
@@ -113,7 +138,7 @@ export class RelayCore {
     env: Envelope,
   ): { accepted: AcceptedEvent[] } {
     const room = this.prepare(roomId, env);
-    requireString(request.targetId, "targetId");
+    const targetId = requireString(request.targetId, "targetId");
     const controlSeq = requireSeq(request.controlSeq, "controlSeq");
     if (!Array.isArray(request.events) || request.events.length === 0) {
       throw new RelayError(
@@ -149,14 +174,15 @@ export class RelayCore {
     const accepted: AcceptedEvent[] = [];
     let appended = false;
     for (const eventId of incoming) {
-      const known = room.events.get(eventId);
+      const key = eventKey(targetId, eventId);
+      const known = room.events.get(key);
       if (known !== undefined) {
-        // 同じ eventId の再送は、二重に追加しない（最初の eventSeq を返す）。
+        // 同じ端末の同じ eventId の再送は、二重に追加しない（最初の eventSeq を返す）。
         accepted.push({ eventId, eventSeq: known });
         continue;
       }
       room.eventSeq += 1;
-      room.events.set(eventId, room.eventSeq);
+      room.events.set(key, room.eventSeq);
       accepted.push({ eventId, eventSeq: room.eventSeq });
       appended = true;
     }
@@ -216,9 +242,10 @@ export class RelayCore {
   ): LeaseResult {
     const room = this.prepare(roomId, env);
     const operatorId = requireString(request.operatorId, "operatorId");
+    const action = parseLeaseAction(request.action);
     const holder = room.control.holderId;
 
-    switch (request.action) {
+    switch (action) {
       case "ACQUIRE":
         if (holder === null) {
           room.control = { ...room.control, holderId: operatorId };
@@ -244,11 +271,11 @@ export class RelayCore {
         this.bump(room);
         this.notify(room, "CONTROL_UPDATED");
         break;
-      default:
-        throw new RelayError(
-          "INVALID_MESSAGE",
-          "action must be ACQUIRE, RENEW or RELEASE",
-        );
+      default: {
+        // action を追加したのに、ここを更新し忘れると、型検査で失敗する。
+        const unreachable: never = action;
+        return unreachable;
+      }
     }
     return {
       holderId: room.control.holderId,
@@ -385,7 +412,13 @@ export class RelayCore {
     };
     for (const listeners of room.connections.values()) {
       for (const listener of listeners) {
-        listener(notification);
+        // 状態の更新は済んでいるので、listener の失敗を、呼び出し元に返さない。
+        // 他の listener への通知は、続ける。
+        try {
+          listener(notification);
+        } catch (error) {
+          this.onListenerError(error);
+        }
       }
     }
   }
