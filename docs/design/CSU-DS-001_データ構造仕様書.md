@@ -13,7 +13,7 @@ owner: "xzyozi"
 purpose: "対象端末が IndexedDB に保存するイベントログと送信状態のスキーマ、書き込みの原子性、複数タブでの排他、スキーマ移行を定義し、復元の不整合を防ぐため"
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
-  - "最小要件定義書（相対パス: ../features/REQUIREMENTS.md）"
+  - "最小要件定義書（相対パス: ../features/CSU-REQ-001_最小要件定義書.md）"
   - "CSU-BD-001 基本設計書正本（相対パス: ./CSU-BD-001_基本設計書.md）"
   - "CSU-DD-001 詳細設計書正本（相対パス: ./CSU-DD-001_詳細設計書.md）"
   - "CSU-IF-001 IF/API仕様書正本（相対パス: ./CSU-IF-001_IF仕様書.md）"

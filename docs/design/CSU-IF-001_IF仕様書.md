@@ -13,7 +13,7 @@ owner: "xzyozi"
 purpose: "対象端末、外部PC、サーバーのあいだで合意する接続契約（HTTP と SSE のメッセージ、エラー、バージョン管理）を定義し、境界を越える受け渡しの不整合を防ぐため"
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
-  - "最小要件定義書（相対パス: ../features/REQUIREMENTS.md）"
+  - "最小要件定義書（相対パス: ../features/CSU-REQ-001_最小要件定義書.md）"
   - "CSU-BD-001 基本設計書正本（相対パス: ./CSU-BD-001_基本設計書.md）"
   - "ADR-007 controlSeq発行元とストレージアダプターのパッケージ分離（相対パス: ../adr/ADR-007_controlSeq発行元とアダプター分離.md）"
   - "CSU-DD-001 詳細設計書正本（相対パス: ./CSU-DD-001_詳細設計書.md）"

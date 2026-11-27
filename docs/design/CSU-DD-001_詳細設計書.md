@@ -13,7 +13,7 @@ owner: "xzyozi"
 purpose: "状態同期基盤（v0.1 MVP）の各モジュールの処理手順、DTO、状態遷移、TTL・再試行の具体値、失敗時契約を定義し、実装・変更時の不整合を防ぐため"
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
-  - "最小要件定義書（相対パス: ../features/REQUIREMENTS.md）"
+  - "最小要件定義書（相対パス: ../features/CSU-REQ-001_最小要件定義書.md）"
   - "CSU-BD-001 基本設計書正本（相対パス: ./CSU-BD-001_基本設計書.md）"
   - "CSU-IF-001 IF/API仕様書正本（相対パス: ./CSU-IF-001_IF仕様書.md）"
   - "CSU-DS-001 データ構造仕様書正本（相対パス: ./CSU-DS-001_データ構造仕様書.md）"
