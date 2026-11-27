@@ -76,7 +76,7 @@ rm -f pyproject.toml
 npm install
 ```
 
-実行後、`package-lock.json` が生成されます。**`package-lock.json` は必ず Git の追跡対象にコミットしてください**（CI 内の `npm ci` で必須となります）。
+実行後、`package-lock.json` が生成されます。**`package-lock.json` は必ず Git の追跡対象にコミットしてください**（CI 内の `npm ci` で必須となります。この規則は、環境・開発基盤仕様書（CSU-ENV-001）を正本とします）。
 
 ---
 

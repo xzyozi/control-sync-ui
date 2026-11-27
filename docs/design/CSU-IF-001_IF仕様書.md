@@ -57,7 +57,7 @@ related_documents:
 | IF-003 | 更新通知                 | サーバー → 対象端末 | SSE（`GET`、片方向） | `/rooms/{roomId}/notifications` | F-004、F-005、F-008        | 計画 |
 | IF-004 | presence heartbeat       | 対象端末 → サーバー | HTTP `POST`          | `/rooms/{roomId}/presence`      | F-004、F-007、F-008        | 計画 |
 | IF-005 | lease の取得・更新・解放 | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/lease`         | F-005、F-006、F-008        | 計画 |
-| IF-006 | 送信対象フィルタの変更   | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/control`       | F-005、F-007、F-008        | 計画 |
+| IF-006 | 送信対象フィルタの変更   | 外部PC → サーバー   | HTTP `POST`          | `/rooms/{roomId}/control`       | F-005、F-006、F-007、F-008 | 計画 |
 
 IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat）とは、送り手も意味も異なる別のインターフェースである（BD D-02）。`{roomId}` はパスパラメータで、以降の表では「パス」と示す。
 
