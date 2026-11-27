@@ -53,7 +53,7 @@ DESIGN_SCOPES = {
     "interface_specification": "external_interface",
 }
 # document_number が必須の形式文書
-NUMBER_REQUIRED_TYPES = set(DESIGN_SCOPES) | {"environment_specification"}
+NUMBER_REQUIRED_TYPES = set(DESIGN_SCOPES) | {"environment_specification", "requirements_specification"}
 # docs/README.md の TYPE_CODE 表に登録済みの document_type
 KNOWN_TYPES = NUMBER_REQUIRED_TYPES | {
     "operation_procedure",
