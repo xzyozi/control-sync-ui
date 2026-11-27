@@ -5,7 +5,7 @@ document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
 status: "draft"
-version: "1.3"
+version: "1.4"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -83,7 +83,7 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 
 - ルートに `package.json` があるため、QG-001〜QG-004 は有効である（`ci-typescript.yml` の仕様）。
 - **パッケージの構成**（[要件定義書](../features/CSU-REQ-001_最小要件定義書.md) の OP-11、OP-08）: npm ワークスペース（`packages/*`）で構成する。パッケージは、`core`、`storage-indexeddb`、`transport-http`、`relay`、`demo` の5つで、実装する時点で追加する。ルートに共通設定（`biome.json`、`tsconfig.base.json`、`vitest.config.ts`）を置き、各パッケージが `typecheck` と `build` のスクリプトを持つ。
-- **QG-001 の範囲**: 現在の Biome の設定は、lint だけを有効にし、書式（フォーマット）の検査は行わない。書式の検査は、実装が増えた段階で追加を検討する。
+- **QG-001 の範囲**: 現在の Biome の設定は、lint だけを有効にし、書式（フォーマット）の検査は行わない。検査の対象は、`packages/` とルートの `vitest.config.ts` に限る。`.github/scripts/` の既存の検証スクリプト（`validateMermaidMarkdown.mjs` など）は、それぞれのワークフロー（QG-005、QG-006）の対象であり、QG-001 の対象外とする。書式の検査は、実装が増えた段階で追加を検討する。
 - **QG-003 の範囲**: テストは `packages/*/test/**/*.test.ts` を、Node の環境で実行する。ブラウザ固有の API（IndexedDB、EventSource）の検証は、手動確認で補う（[CSU-TEST-001](../test/CSU-TEST-001_テスト計画・結果報告書.md)）。
 - **`package-lock.json`**: ローカルに Node がない場合は、手動実行のワークフロー `generate-lockfile.yml`（Actions の「Generate package-lock.json」）で生成し、成果物（artifact）の `package-lock.json` を、ルートにコミットする。生成されるまでの間は、期限つきの例外 EX-002（§6）として、CI は `npm install` で代用し、`setup-node` のキャッシュはロックファイルがあるときだけ有効にする（`ci-typescript.yml`）。
 
@@ -138,3 +138,4 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.1 | 2026-11-28 | xzyozi | パッケージ構成を要件定義書 OP-11 で管理することを明記。テスト計画・結果報告書（CSU-TEST-001）への参照を追加。                                                                                                                                                                   |
 | Rev.1.2 | 2026-11-28 | xzyozi | npm ワークスペースの構成（OP-11）と `transport-http`（OP-08）を反映。ルートに `package.json` を追加したため、EX-001 を解除。QG-001（lint のみ）、QG-003、`package-lock.json` の扱いを明記。                                                                                     |
 | Rev.1.3 | 2026-11-28 | xzyozi | CI 失敗（`setup-node` の `cache: npm` がロックファイルなしで失敗）への対応。`ci-typescript.yml` のキャッシュをロックファイルがあるときだけ有効にし、ロックファイル生成用の手動ワークフローを追加。期限つきの例外 EX-002 を登録。§4.2 の Biome の記述を実態（lint のみ）に修正。 |
+| Rev.1.4 | 2026-11-28 | xzyozi | CI の lint（QG-001）が、既存の `.github/scripts/validateMermaidMarkdown.mjs` の `noForEach` で失敗したため、Biome の検査対象を `packages/` とルートの `vitest.config.ts` に限定し、QG-001 の範囲として明記。                                                                    |
