@@ -1,6 +1,13 @@
 {
   "files": {
-    "ignore": ["**/dist/**", "**/node_modules/**", "package-lock.json"]
+    "include": [
+      "packages/**",
+      "vitest.config.ts"
+    ],
+    "ignore": [
+      "**/dist/**",
+      "**/node_modules/**"
+    ]
   },
   "formatter": {
     "enabled": false
