@@ -3,7 +3,7 @@ title: "サブモジュール統合手順書（親プロジェクトへの組み
 document_type: "operation_procedure"
 document_role: "procedure"
 ssot_scope: "operation"
-status: "draft"
+status: "approved"
 version: "1.1"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
