@@ -79,9 +79,17 @@ try {
   assertEqual(domain.state, 21);
 
   const controlStore = new ControlStore();
+  const dummyEventSource = class {
+    readyState = 2;
+    onopen = null;
+    onmessage = null;
+    onerror = null;
+    close() {}
+  };
   const transport = new HttpTransport({
     baseUrl: server.baseUrl,
     schemaVersion: "1",
+    EventSource: dummyEventSource,
   });
 
   const snapshot = await transport.fetchControl({
