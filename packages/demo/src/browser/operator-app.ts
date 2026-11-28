@@ -4,7 +4,7 @@ import {
   DEFAULT_DEMO_ROOM_ID,
   DEFAULT_DEMO_TARGET_ID,
   DEMO_SCHEMA_VERSION,
-} from "../shared";
+} from "../shared.js";
 
 interface SummaryResponse {
   readonly roomId: string;

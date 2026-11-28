@@ -5,7 +5,7 @@ export {
   DEMO_SCHEMA_VERSION,
   INITIAL_DEMO_STATE,
   demoReducer,
-} from "./shared";
-export type { DemoDomainState } from "./shared";
-export { startDemoServer } from "./server";
-export type { DemoServer, DemoServerOptions } from "./server";
+} from "./shared.js";
+export type { DemoDomainState } from "./shared.js";
+export { startDemoServer } from "./server.js";
+export type { DemoServer, DemoServerOptions } from "./server.js";

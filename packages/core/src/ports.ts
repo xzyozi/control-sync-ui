@@ -1,4 +1,4 @@
-import type { DomainEventInput, StoredEvent } from "./types";
+import type { DomainEventInput, StoredEvent } from "./types.js";
 
 /**
  * 永続化の抽象（BD C-005、D-03）。責務は次の3つだけである。

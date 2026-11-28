@@ -17,7 +17,7 @@ import {
   type EventSourceConstructor,
   type FetchLike,
   type ResponseLike,
-} from "./web-types";
+} from "./web-types.js";
 
 // 実行時のグローバル。使う分だけを宣言する（型は、web-types.ts を参照）。
 declare const fetch: FetchLike;

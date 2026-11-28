@@ -1,6 +1,6 @@
-import { DuplicateEventError } from "./errors";
-import type { StoragePort } from "./ports";
-import type { DomainEventInput, StoredEvent } from "./types";
+import { DuplicateEventError } from "./errors.js";
+import type { StoragePort } from "./ports.js";
+import type { DomainEventInput, StoredEvent } from "./types.js";
 
 interface Delivery {
   status: "PENDING" | "SENT";

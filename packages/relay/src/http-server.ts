@@ -1,10 +1,10 @@
 import {
   type RelayHttpOptions,
   createRelayHandler,
-} from "./http-handler";
-import type { CreateServerFn } from "./node-types";
-import type { RelayCore } from "./relay-core";
-import { isRecord } from "./validation";
+} from "./http-handler.js";
+import type { CreateServerFn } from "./node-types.js";
+import type { RelayCore } from "./relay-core.js";
+import { isRecord } from "./validation.js";
 
 export interface RelayServerOptions extends RelayHttpOptions {
   /** 待受ホスト（既定 `"127.0.0.1"`）。 */

@@ -1,4 +1,4 @@
-import type { ControlState } from "./types";
+import type { ControlState } from "./types.js";
 
 /** 初期の制御状態。何も送らない（安全側、DD §2.3）。 */
 export const INITIAL_CONTROL: ControlState = {

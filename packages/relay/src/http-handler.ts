@@ -1,8 +1,8 @@
-import { RelayError } from "./errors";
-import type { IncomingRequest, ServerResponseLike } from "./node-types";
-import type { RelayCore } from "./relay-core";
-import type { Envelope, Notification } from "./types";
-import { isRecord } from "./validation";
+import { RelayError } from "./errors.js";
+import type { IncomingRequest, ServerResponseLike } from "./node-types.js";
+import type { RelayCore } from "./relay-core.js";
+import type { Envelope, Notification } from "./types.js";
+import { isRecord } from "./validation.js";
 
 declare const console: { error: (...data: unknown[]) => void };
 declare const TextDecoder: new (

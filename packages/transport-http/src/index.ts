@@ -1,5 +1,5 @@
-export { HttpTransport } from "./http-transport";
-export type { HttpTransportOptions } from "./http-transport";
+export { HttpTransport } from "./http-transport.js";
+export type { HttpTransportOptions } from "./http-transport.js";
 export type {
   AbortControllerConstructor,
   AbortControllerLike,
@@ -9,4 +9,4 @@ export type {
   MessageEventLike,
   RequestInitLike,
   ResponseLike,
-} from "./web-types";
+} from "./web-types.js";

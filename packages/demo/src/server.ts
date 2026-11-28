@@ -10,12 +10,12 @@ import {
 import {
   DEFAULT_DEMO_ROOM_ID,
   DEMO_SCHEMA_VERSION,
-} from "./shared";
+} from "./shared.js";
 import {
   renderIndexHtml,
   renderOperatorHtml,
   renderTargetHtml,
-} from "./pages";
+} from "./pages.js";
 
 interface FsModuleLike {
   readFile(path: string, encoding: "utf-8"): Promise<string>;

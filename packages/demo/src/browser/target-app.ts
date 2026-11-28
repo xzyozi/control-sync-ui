@@ -14,7 +14,7 @@ import {
   DEMO_SCHEMA_VERSION,
   INITIAL_DEMO_STATE,
   demoReducer,
-} from "../shared";
+} from "../shared.js";
 
 function el(testId: string): HTMLElement {
   const node = document.querySelector(`[data-testid="${testId}"]`);
