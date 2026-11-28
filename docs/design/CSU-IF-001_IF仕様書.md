@@ -5,7 +5,7 @@ document_number: "CSU-IF-001"
 document_role: "normative"
 ssot_scope: "external_interface"
 status: "approved"
-version: "1.6"
+version: "1.7"
 created_at: "2026-11-26"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -31,8 +31,8 @@ related_documents:
 
 - **提供者 / 利用者**: 提供者はサーバー（v0.1 の参照実装は `relay`）。利用者は対象端末（ブラウザ）と外部PC（操作者）。
 - **連携の目的**: 外部PCの操作に由来する制御状態を対象端末へ伝え、対象端末が制御状態に応じてイベントを送信するため。
-- **対象範囲**: 制御状態の取得、イベントの送信、制御状態の変更、lease の取得・更新・解放、presence heartbeat、更新通知。
-- **対象外**: 認証・認可（[#8](https://github.com/xzyozi/control-sync-ui/issues/8)）、タブ閉鎖中の要求の滞留（[#4](https://github.com/xzyozi/control-sync-ui/issues/4)）、複数操作者の競合ポリシー（[#2](https://github.com/xzyozi/control-sync-ui/issues/2)）。
+- **対象範囲**: 制御状態の取得、イベントの送信、制御状態の変更、lease の取得・更新・解放、presence heartbeat、更新通知、認証・認可（#8）、サーバー側不変条件検証。
+- **対象外**: タブ閉鎖中の要求の滞留（[#4](https://github.com/xzyozi/control-sync-ui/issues/4)）、複数操作者の競合ポリシー（[#2](https://github.com/xzyozi/control-sync-ui/issues/2)）。
 
 ### 1.2 単一責任範囲 (SSOT) と文書境界
 
@@ -73,6 +73,7 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | :-------------- | :---------------------------------------------- | :------------------------------- | :------------------------------------------------------ |
 | `schemaVersion` | ヘッダー `X-Schema-Version`（必須）             | クエリパラメータ `schemaVersion` | 通知の `data` に `schemaVersion` を含める。             |
 | `requestId`     | ヘッダー `X-Request-Id`（必須）                 | クエリパラメータ `requestId`     | HTTP の応答は、ヘッダー `X-Request-Id` に同じ値を返す。 |
+| 認証トークン    | ヘッダー `Authorization: Bearer <token>`（#8 有効時） | クエリパラメータ `token`（または Cookie） | 応答は `Cache-Control: no-store`、`X-Content-Type-Options: nosniff` を返す。 |
 
 - **欠落時の扱い**: `schemaVersion` または `requestId` が欠落している場合は、`INVALID_MESSAGE` で拒否する。値が一致しない場合は、`SCHEMA_VERSION_MISMATCH` で拒否する。
 - **エラー応答の共通形式**: エラーのときは、HTTP ステータスと、次の項目を持つ JSON を返す。
@@ -90,11 +91,14 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | :------------------------ | :-------------- |
 | `INVALID_MESSAGE`         | 400             |
 | `SCHEMA_VERSION_MISMATCH` | 400             |
+| `UNAUTHORIZED`            | 401             |
+| `FORBIDDEN`               | 403             |
 | `LOCK_NOT_HELD`           | 403             |
 | `ROOM_NOT_FOUND`          | 404             |
 | `STALE_CONTROL_SEQ`       | 409             |
 | `LOCK_HELD_BY_OTHER`      | 409             |
 | `TARGET_OFFLINE`          | 409             |
+| `INVARIANT_VIOLATION`     | 422             |
 
   ※ 上表はサーバーが返すエラーコードである。クライアント側の通信アダプター（`transport-http`）が 2xx の不正応答や非 JSON の 4xx 応答を検出した場合は、アダプター固有のエラーコード（`INVALID_RESPONSE`、`HTTP_<status>`）として扱う（[DD §4.1](./CSU-DD-001_詳細設計書.md)）。
 
@@ -106,12 +110,13 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 
 ## 3. 認証・認可
 
-| 項目             | 内容                                                                                                                         |
-| :--------------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| 認証方式         | v0.1 は認証を行わない。信頼できるネットワークでの単体検証だけを想定する（#8 で追加）。                                       |
-| 認可（権限）単位 | v0.1 は Room 単位の分離と、lease による操作権限だけを扱う。lease の判定は認可ではなく、制御状態の排他制御である（BD D-01）。 |
-| 資格情報の管理   | なし（#8 で定める）。                                                                                                        |
-| 権限不足時の応答 | lease を持たない操作者の制御状態の変更は、`LOCK_NOT_HELD`（403）で拒否する（§4.6.3）。                                       |
+| 項目               | 内容                                                                                                                                                                                            |
+| :----------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 認証方式           | オプションの `authenticate` フック（#8）により Bearer トークン（HTTP: `Authorization: Bearer`、SSE: `token` クエリ）または Cookie（`withCredentials`）で主体（`RelayPrincipal`）を解決する。省略時は v0.1 互換の認証なしモードとして動作する。 |
+| 認可（権限）単位   | テナント物理分離（`tenantId` 単位の Room 隔離）、Room アクセス許可（`allowedRoomIds`）、アクターなりすまし防止（`targetIds` / `operatorIds`）、任意判定（`authorize` フック）、および lease 排他制御。 |
+| 不変条件検証       | `onValidatePushEvents` / `onValidateChangeControl` / `onValidateLease` フックにより、Mutation 適用前にビジネスルールを検証し、違反時は状態を変更せず `INVARIANT_VIOLATION`（422）で拒否する。 |
+| 資格情報の管理     | トークン発行・検証ロジックおよび署名鍵は親プロジェクト（`authenticate` / `authToken` 供給元）が管理し、リポジトリやログには保持しない。TLS 終端はリバースプロキシ層で実施する。                |
+| 権限不足・認証失敗 | 認証欠落・不正は `UNAUTHORIZED`（401）、認可拒否・テナント要件違反は `FORBIDDEN`（403）、lease 未保持は `LOCK_NOT_HELD`（403）を返す。                                                         |
 
 ---
 
@@ -359,6 +364,10 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | TR-011 | IF-003                         | 制御状態が更新される（IF-006、保持者の変更）と `CONTROL_UPDATED`、イベントが追加されると `EVENTS_APPENDED` が、接続中の対象端末へ通知される。               | 正常（通知）   | TC-011           |
 | TR-012 | IF-002                         | 同じ Room に受理されたイベントの `eventSeq` は、一意で増加する。                                                                                            | 正常（順序）   | TC-012           |
 | TR-013 | IF-006                         | 同じ Room の他の端末がオフラインでも、`targetId` の端末がオンラインなら変更は拒否されない。他の端末は、再接続時の IF-001 で最新の `controlSeq` を取得する。 | 正常・異常     | TC-013           |
+| TR-014 | IF-001〜IF-006                 | `authenticate` 有効時、未認証・不正トークンは `401 UNAUTHORIZED`、権限外 Room/アクターは `403 FORBIDDEN` で拒否され、状態が変化しない。                   | 認証・認可     | TC-014           |
+| TR-015 | IF-001〜IF-006                 | 同一 `roomId` でも `tenantId` ごとに制御状態・イベント・通知が物理分離される。                                                                              | テナント分離   | TC-015           |
+| TR-016 | IF-002、IF-005、IF-006         | 不変条件検証フックが違反を検出した場合、`422 INVARIANT_VIOLATION` で拒否され、状態は変化しない（部分適用されない）。                                       | 異常・原子性   | TC-016           |
+| TR-017 | IF-003                         | SSE 接続で `token` クエリまたは資格情報による認証が成立し、未認証時はストリームを開始せず `401` を返す。                                                   | 認証（SSE）    | TC-017           |
 
 ---
 
@@ -388,3 +397,4 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | Rev.1.4 | 2026-11-28 | xzyozi | 機能テスト要件（TR-001〜TR-013）の「対応テストケース」に、テスト計画・結果報告書（CSU-TEST-001）のケース ID（TC-001〜TC-013）を記入。                                                                                                                                                                                                                                                                                                                                                                           |
 | Rev.1.5 | 2026-11-28 | xzyozi | IF-002 の冪等性の単位を `(targetId, eventId)` の組に変更。IF-006 の冪等性は、成功した応答だけを保持し、クライアントが IF-006 を同時に1件だけ再試行する前提を明記（DD F-005 と対応）。                                                                                                                                                                                                                                                                                                                           |
 | Rev.1.6 | 2026-11-28 | xzyozi | レビュー指摘（#25）を反映し、§2.2 にクライアント側の通信アダプター固有のエラーコード（`INVALID_RESPONSE`、`HTTP_<status>`）がサーバー契約とは別分類である旨を注記。 |
+| Rev.1.7 | 2026-11-28 | xzyozi | #8 対応として認証（`UNAUTHORIZED` 401）・認可（`FORBIDDEN` 403）・テナント分離・Mutation 不変条件検証（`INVARIANT_VIOLATION` 422）・SSE/HTTP のトークン受け渡し契約を追加。 |

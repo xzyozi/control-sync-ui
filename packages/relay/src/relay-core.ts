@@ -2,14 +2,26 @@ import { DEFAULTS } from "./defaults.js";
 import { RelayError } from "./errors.js";
 import type {
   AcceptedEvent,
+  ChangeControlValidationContext,
   ControlSnapshot,
   ControlState,
+  CreateRoomOptions,
   Envelope,
+  IncomingEventRecord,
+  LeaseAction,
   LeaseResult,
+  LeaseValidationContext,
   Notification,
   NotificationListener,
   NotificationType,
+  PushEventsValidationContext,
+  RelayAuditEvent,
+  RelayAuthorizer,
+  RelayInvariantHook,
+  RelayOperation,
   RelayOptions,
+  RelayPrincipal,
+  RelayRequestContext,
 } from "./types.js";
 import {
   isRecord,
@@ -26,6 +38,11 @@ declare const console: { error: (...data: unknown[]) => void };
 /** 端末ごとに一意な eventId のキー（DD §2.3: eventId は端末内で一意）。 */
 function eventKey(targetId: string, eventId: string): string {
   return `${targetId}\u0000${eventId}`;
+}
+
+/** テナント物理分離用の Room キー（#8）。 */
+function roomKey(tenantId: string | undefined, roomId: string): string {
+  return `${tenantId ?? ""}\u0000${roomId}`;
 }
 
 interface RoomState {
@@ -45,8 +62,8 @@ interface RoomState {
 }
 
 /**
- * サーバーの判定ロジック（DD F-005〜F-008）。HTTP や SSE は扱わない。
- * 状態はメモリで持つ（v0.1 の参照実装、DS §1.1）。
+ * サーバーの判定ロジック（DD F-005〜F-008、#8 認可・テナント分離・不変条件検証）。
+ * HTTP や SSE は扱わない。状態はメモリで持つ（v0.1 の参照実装、DS §1.1）。
  *
  * lease の期限切れは、期限の時刻に解放する（DD V-09）。実行環境は、`nextExpiry()`
  * の時刻に `tick()` を呼ぶ。各メソッドも、処理の前に期限を確認するので、
@@ -60,6 +77,18 @@ export class RelayCore {
   private readonly presenceTtlMs: number;
   private readonly requestIdRetentionMs: number;
   private readonly onListenerError: (error: unknown) => void;
+  private readonly requireTenant: boolean;
+  private readonly authorize: RelayAuthorizer | undefined;
+  private readonly onValidatePushEvents:
+    | RelayInvariantHook<PushEventsValidationContext>
+    | undefined;
+  private readonly onValidateChangeControl:
+    | RelayInvariantHook<ChangeControlValidationContext>
+    | undefined;
+  private readonly onValidateLease:
+    | RelayInvariantHook<LeaseValidationContext>
+    | undefined;
+  private readonly onAudit: ((event: RelayAuditEvent) => void) | undefined;
 
   constructor(options: RelayOptions = {}) {
     this.onListenerError =
@@ -71,15 +100,26 @@ export class RelayCore {
     this.presenceTtlMs = options.presenceTtlMs ?? DEFAULTS.presenceTtlMs;
     this.requestIdRetentionMs =
       options.requestIdRetentionMs ?? DEFAULTS.requestIdRetentionMs;
+    this.requireTenant = options.requireTenant ?? false;
+    this.authorize = options.authorize;
+    this.onValidatePushEvents = options.onValidatePushEvents;
+    this.onValidateChangeControl = options.onValidateChangeControl;
+    this.onValidateLease = options.onValidateLease;
+    this.onAudit = options.onAudit;
   }
 
-  /** Room を作る。すでにある場合は、何もしない。 */
-  createRoom(roomId: string): void {
+  /** Room を作る。すでにある場合は、何もしない。`tenantId` を分けると物理分離される。 */
+  createRoom(roomId: string, options: CreateRoomOptions = {}): void {
     const id = requireString(roomId, "roomId");
-    if (this.rooms.has(id)) {
+    const tenantId =
+      options.tenantId !== undefined
+        ? requireString(options.tenantId, "tenantId")
+        : undefined;
+    const key = roomKey(tenantId, id);
+    if (this.rooms.has(key)) {
       return;
     }
-    this.rooms.set(id, {
+    this.rooms.set(key, {
       controlSeq: 0,
       control: { sendFilter: { mode: "NONE" }, holderId: null },
       leaseExpiresAt: null,
@@ -125,10 +165,23 @@ export class RelayCore {
     roomId: string,
     request: { targetId: string },
     env: Envelope,
+    context?: RelayRequestContext,
   ): ControlSnapshot {
-    const room = this.prepare(roomId, env);
-    requireString(request.targetId, "targetId");
-    return { controlSeq: room.controlSeq, control: room.control };
+    return this.runWithAudit(
+      "getControl",
+      roomId,
+      env,
+      context,
+      { targetId: typeof request.targetId === "string" ? request.targetId : undefined },
+      () => {
+        this.checkEnvelope(env);
+        const targetId = requireString(request.targetId, "targetId");
+        const { room } = this.prepareRoom("getControl", roomId, context, {
+          targetId,
+        });
+        return { controlSeq: room.controlSeq, control: room.control };
+      },
+    );
   }
 
   /** IF-002: イベントの送信。 */
@@ -136,60 +189,93 @@ export class RelayCore {
     roomId: string,
     request: { targetId: string; controlSeq: number; events: unknown },
     env: Envelope,
+    context?: RelayRequestContext,
   ): { accepted: AcceptedEvent[] } {
-    const room = this.prepare(roomId, env);
-    const targetId = requireString(request.targetId, "targetId");
-    const controlSeq = requireSeq(request.controlSeq, "controlSeq");
-    if (!Array.isArray(request.events) || request.events.length === 0) {
-      throw new RelayError(
-        "INVALID_MESSAGE",
-        "events must be a non-empty array",
-      );
-    }
-    const incoming = request.events.map((item: unknown) => {
-      if (!isRecord(item) || !isRecord(item.payload)) {
-        throw new RelayError(
-          "INVALID_MESSAGE",
-          "each event needs eventId and payload",
+    return this.runWithAudit(
+      "pushEvents",
+      roomId,
+      env,
+      context,
+      { targetId: typeof request.targetId === "string" ? request.targetId : undefined },
+      () => {
+        this.checkEnvelope(env);
+        const targetId = requireString(request.targetId, "targetId");
+        const controlSeq = requireSeq(request.controlSeq, "controlSeq");
+        if (!Array.isArray(request.events) || request.events.length === 0) {
+          throw new RelayError(
+            "INVALID_MESSAGE",
+            "events must be a non-empty array",
+          );
+        }
+        const incoming: IncomingEventRecord[] = request.events.map(
+          (item: unknown) => {
+            if (!isRecord(item) || !isRecord(item.payload)) {
+              throw new RelayError(
+                "INVALID_MESSAGE",
+                "each event needs eventId and payload",
+              );
+            }
+            return {
+              eventId: requireString(item.eventId, "eventId"),
+              payload: item.payload,
+            };
+          },
         );
-      }
-      return requireString(item.eventId, "eventId");
-    });
 
-    // controlSeq は、サーバーの最新値と一致すること（IF §4.2.1）。
-    if (controlSeq > room.controlSeq) {
-      throw new RelayError(
-        "INVALID_MESSAGE",
-        "controlSeq is newer than the server's",
-      );
-    }
-    if (controlSeq < room.controlSeq) {
-      throw new RelayError(
-        "STALE_CONTROL_SEQ",
-        "controlSeq is stale",
-        room.controlSeq,
-      );
-    }
+        const { room, roomId: id, tenantId } = this.prepareRoom(
+          "pushEvents",
+          roomId,
+          context,
+          { targetId },
+        );
 
-    const accepted: AcceptedEvent[] = [];
-    let appended = false;
-    for (const eventId of incoming) {
-      const key = eventKey(targetId, eventId);
-      const known = room.events.get(key);
-      if (known !== undefined) {
-        // 同じ端末の同じ eventId の再送は、二重に追加しない（最初の eventSeq を返す）。
-        accepted.push({ eventId, eventSeq: known });
-        continue;
-      }
-      room.eventSeq += 1;
-      room.events.set(key, room.eventSeq);
-      accepted.push({ eventId, eventSeq: room.eventSeq });
-      appended = true;
-    }
-    if (appended) {
-      this.notify(room, "EVENTS_APPENDED", room.eventSeq);
-    }
-    return { accepted };
+        // controlSeq は、サーバーの最新値と一致すること（IF §4.2.1）。
+        if (controlSeq > room.controlSeq) {
+          throw new RelayError(
+            "INVALID_MESSAGE",
+            "controlSeq is newer than the server's",
+          );
+        }
+        if (controlSeq < room.controlSeq) {
+          throw new RelayError(
+            "STALE_CONTROL_SEQ",
+            "controlSeq is stale",
+            room.controlSeq,
+          );
+        }
+
+        // 変更を適用する前にビジネスルール／不変条件フックを実行し、原子性を保つ（#8）。
+        this.runInvariant(this.onValidatePushEvents, {
+          roomId: id,
+          tenantId,
+          targetId,
+          controlSeq,
+          control: room.control,
+          events: incoming,
+          principal: context?.principal,
+        });
+
+        const accepted: AcceptedEvent[] = [];
+        let appended = false;
+        for (const item of incoming) {
+          const key = eventKey(targetId, item.eventId);
+          const known = room.events.get(key);
+          if (known !== undefined) {
+            // 同じ端末の同じ eventId の再送は、二重に追加しない（最初の eventSeq を返す）。
+            accepted.push({ eventId: item.eventId, eventSeq: known });
+            continue;
+          }
+          room.eventSeq += 1;
+          room.events.set(key, room.eventSeq);
+          accepted.push({ eventId: item.eventId, eventSeq: room.eventSeq });
+          appended = true;
+        }
+        if (appended) {
+          this.notify(room, "EVENTS_APPENDED", room.eventSeq);
+        }
+        return { accepted };
+      },
+    );
   }
 
   /** IF-003: 更新通知の接続。接続を閉じる関数を返す。 */
@@ -198,25 +284,38 @@ export class RelayCore {
     request: { targetId: string },
     listener: NotificationListener,
     env: Envelope,
+    context?: RelayRequestContext,
   ): () => void {
-    const room = this.prepare(roomId, env);
-    const targetId = requireString(request.targetId, "targetId");
-    let listeners = room.connections.get(targetId);
-    if (listeners === undefined) {
-      listeners = new Set();
-      room.connections.set(targetId, listeners);
-    }
-    listeners.add(listener);
-    return () => {
-      const current = room.connections.get(targetId);
-      if (current === undefined) {
-        return;
-      }
-      current.delete(listener);
-      if (current.size === 0) {
-        room.connections.delete(targetId);
-      }
-    };
+    return this.runWithAudit(
+      "connect",
+      roomId,
+      env,
+      context,
+      { targetId: typeof request.targetId === "string" ? request.targetId : undefined },
+      () => {
+        this.checkEnvelope(env);
+        const targetId = requireString(request.targetId, "targetId");
+        const { room } = this.prepareRoom("connect", roomId, context, {
+          targetId,
+        });
+        let listeners = room.connections.get(targetId);
+        if (listeners === undefined) {
+          listeners = new Set();
+          room.connections.set(targetId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+          const current = room.connections.get(targetId);
+          if (current === undefined) {
+            return;
+          }
+          current.delete(listener);
+          if (current.size === 0) {
+            room.connections.delete(targetId);
+          }
+        };
+      },
+    );
   }
 
   /** IF-004: presence heartbeat。更新通知の接続がなくても、受け付ける。 */
@@ -224,10 +323,23 @@ export class RelayCore {
     roomId: string,
     request: { targetId: string },
     env: Envelope,
+    context?: RelayRequestContext,
   ): void {
-    const room = this.prepare(roomId, env);
-    const targetId = requireString(request.targetId, "targetId");
-    room.presence.set(targetId, this.now() + this.presenceTtlMs);
+    this.runWithAudit(
+      "presence",
+      roomId,
+      env,
+      context,
+      { targetId: typeof request.targetId === "string" ? request.targetId : undefined },
+      () => {
+        this.checkEnvelope(env);
+        const targetId = requireString(request.targetId, "targetId");
+        const { room } = this.prepareRoom("presence", roomId, context, {
+          targetId,
+        });
+        room.presence.set(targetId, this.now() + this.presenceTtlMs);
+      },
+    );
   }
 
   /**
@@ -239,92 +351,173 @@ export class RelayCore {
     roomId: string,
     request: { operatorId: string; action: string },
     env: Envelope,
+    context?: RelayRequestContext,
   ): LeaseResult {
-    const room = this.prepare(roomId, env);
-    const operatorId = requireString(request.operatorId, "operatorId");
-    const action = parseLeaseAction(request.action);
-    const holder = room.control.holderId;
+    return this.runWithAudit(
+      "lease",
+      roomId,
+      env,
+      context,
+      {
+        operatorId:
+          typeof request.operatorId === "string" ? request.operatorId : undefined,
+      },
+      () => {
+        this.checkEnvelope(env);
+        const operatorId = requireString(request.operatorId, "operatorId");
+        const action = parseLeaseAction(request.action);
+        const { room, roomId: id, tenantId } = this.prepareRoom(
+          "lease",
+          roomId,
+          context,
+          { operatorId, action },
+        );
+        const holder = room.control.holderId;
 
-    switch (action) {
-      case "ACQUIRE":
-        if (holder === null) {
-          room.control = { ...room.control, holderId: operatorId };
-          this.extendLease(room);
-          this.bump(room);
-          this.notify(room, "CONTROL_UPDATED");
-        } else if (holder === operatorId) {
-          this.extendLease(room);
-        } else {
-          throw new RelayError(
-            "LOCK_HELD_BY_OTHER",
-            "the lease is held by another operator",
-          );
+        switch (action) {
+          case "ACQUIRE":
+            if (holder !== null && holder !== operatorId) {
+              throw new RelayError(
+                "LOCK_HELD_BY_OTHER",
+                "the lease is held by another operator",
+              );
+            }
+            this.runInvariant(this.onValidateLease, {
+              roomId: id,
+              tenantId,
+              operatorId,
+              action,
+              currentControl: room.control,
+              controlSeq: room.controlSeq,
+              principal: context?.principal,
+            });
+            if (holder === null) {
+              room.control = { ...room.control, holderId: operatorId };
+              this.extendLease(room);
+              this.bump(room);
+              this.notify(room, "CONTROL_UPDATED");
+            } else {
+              this.extendLease(room);
+            }
+            break;
+          case "RENEW":
+            this.assertHolder(room, operatorId);
+            this.runInvariant(this.onValidateLease, {
+              roomId: id,
+              tenantId,
+              operatorId,
+              action,
+              currentControl: room.control,
+              controlSeq: room.controlSeq,
+              principal: context?.principal,
+            });
+            this.extendLease(room);
+            break;
+          case "RELEASE":
+            this.assertHolder(room, operatorId);
+            this.runInvariant(this.onValidateLease, {
+              roomId: id,
+              tenantId,
+              operatorId,
+              action,
+              currentControl: room.control,
+              controlSeq: room.controlSeq,
+              principal: context?.principal,
+            });
+            this.clearHolder(room);
+            this.bump(room);
+            this.notify(room, "CONTROL_UPDATED");
+            break;
+          default: {
+            // action を追加したのに、ここを更新し忘れると、型検査で失敗する。
+            const unreachable: never = action;
+            return unreachable;
+          }
         }
-        break;
-      case "RENEW":
-        this.assertHolder(room, operatorId);
-        this.extendLease(room);
-        break;
-      case "RELEASE":
-        this.assertHolder(room, operatorId);
-        this.clearHolder(room);
-        this.bump(room);
-        this.notify(room, "CONTROL_UPDATED");
-        break;
-      default: {
-        // action を追加したのに、ここを更新し忘れると、型検査で失敗する。
-        const unreachable: never = action;
-        return unreachable;
-      }
-    }
-    return {
-      holderId: room.control.holderId,
-      controlSeq: room.controlSeq,
-    };
+        return {
+          holderId: room.control.holderId,
+          controlSeq: room.controlSeq,
+        };
+      },
+    );
   }
 
   /**
    * IF-006: 送信対象フィルタの変更。処理の順序は、共通項目の検証（F-008）、
-   * ロックの検証（F-006）、オンライン判定（F-007）、`controlSeq` の発行（F-005）。
+   * 認可検証（#8）、ロックの検証（F-006）、オンライン判定（F-007）、
+   * 不変条件検証（#8）、`controlSeq` の発行（F-005）。
    * 同じ requestId の再送は、二重に適用せず、最初の応答を返す（DD V-08）。
    */
   changeControl(
     roomId: string,
     request: { operatorId: string; targetId: string; sendFilter: unknown },
     env: Envelope,
+    context?: RelayRequestContext,
   ): { controlSeq: number } {
-    const room = this.prepare(roomId, env);
-    const requestId = requireString(env.requestId, "requestId");
-    const operatorId = requireString(request.operatorId, "operatorId");
-    const targetId = requireString(request.targetId, "targetId");
-    const sendFilter = parseSendFilter(request.sendFilter);
+    return this.runWithAudit(
+      "changeControl",
+      roomId,
+      env,
+      context,
+      {
+        operatorId:
+          typeof request.operatorId === "string" ? request.operatorId : undefined,
+        targetId:
+          typeof request.targetId === "string" ? request.targetId : undefined,
+      },
+      () => {
+        this.checkEnvelope(env);
+        const requestId = requireString(env.requestId, "requestId");
+        const operatorId = requireString(request.operatorId, "operatorId");
+        const targetId = requireString(request.targetId, "targetId");
+        const sendFilter = parseSendFilter(request.sendFilter);
 
-    const now = this.now();
-    this.purgeResponses(room, now);
-    const cached = room.responses.get(requestId);
-    if (cached !== undefined) {
-      return { controlSeq: cached.controlSeq };
-    }
+        const { room, roomId: id, tenantId } = this.prepareRoom(
+          "changeControl",
+          roomId,
+          context,
+          { operatorId, targetId },
+        );
 
-    this.assertHolder(room, operatorId);
-    if (!this.isOnline(room, targetId, now)) {
-      throw new RelayError("TARGET_OFFLINE", "the target is offline");
-    }
+        const now = this.now();
+        this.purgeResponses(room, now);
+        const cached = room.responses.get(requestId);
+        if (cached !== undefined) {
+          return { controlSeq: cached.controlSeq };
+        }
 
-    room.control = { ...room.control, sendFilter };
-    const controlSeq = this.bump(room);
-    room.responses.set(requestId, {
-      controlSeq,
-      expiresAt: now + this.requestIdRetentionMs,
-    });
-    this.notify(room, "CONTROL_UPDATED");
-    return { controlSeq };
+        this.assertHolder(room, operatorId);
+        if (!this.isOnline(room, targetId, now)) {
+          throw new RelayError("TARGET_OFFLINE", "the target is offline");
+        }
+
+        this.runInvariant(this.onValidateChangeControl, {
+          roomId: id,
+          tenantId,
+          operatorId,
+          targetId,
+          sendFilter,
+          currentControl: room.control,
+          controlSeq: room.controlSeq,
+          principal: context?.principal,
+        });
+
+        room.control = { ...room.control, sendFilter };
+        const controlSeq = this.bump(room);
+        room.responses.set(requestId, {
+          controlSeq,
+          expiresAt: now + this.requestIdRetentionMs,
+        });
+        this.notify(room, "CONTROL_UPDATED");
+        return { controlSeq };
+      },
+    );
   }
 
   // ---- 内部 ----
 
-  /** F-008（共通項目の検証）、Room の確認、lease の期限の確認。 */
-  private prepare(roomId: unknown, env: Envelope): RoomState {
+  /** F-008（共通項目の検証）。 */
+  private checkEnvelope(env: Envelope): void {
     if (
       typeof env.schemaVersion !== "string" ||
       env.schemaVersion.length === 0 ||
@@ -342,12 +535,193 @@ export class RelayCore {
         "schemaVersion does not match",
       );
     }
-    const room = this.rooms.get(requireString(roomId, "roomId"));
+  }
+
+  private resolveTenantId(
+    context: RelayRequestContext | undefined,
+  ): string | undefined {
+    const principalTenant = context?.principal?.tenantId;
+    const contextTenant = context?.tenantId;
+    if (
+      principalTenant !== undefined &&
+      contextTenant !== undefined &&
+      principalTenant !== contextTenant
+    ) {
+      throw new RelayError("FORBIDDEN", "tenant mismatch");
+    }
+    const resolved = principalTenant ?? contextTenant;
+    return resolved !== undefined
+      ? requireString(resolved, "tenantId")
+      : undefined;
+  }
+
+  private assertAuthorized(params: {
+    readonly operation: RelayOperation;
+    readonly roomId: string;
+    readonly tenantId: string | undefined;
+    readonly principal: RelayPrincipal | undefined;
+    readonly targetId?: string | undefined;
+    readonly operatorId?: string | undefined;
+    readonly action?: LeaseAction | undefined;
+  }): void {
+    if (this.requireTenant && params.tenantId === undefined) {
+      throw new RelayError("FORBIDDEN", "tenantId is required");
+    }
+    const { principal } = params;
+    if (principal !== undefined) {
+      if (
+        principal.allowedRoomIds !== undefined &&
+        !principal.allowedRoomIds.includes(params.roomId)
+      ) {
+        throw new RelayError("FORBIDDEN", "room access denied");
+      }
+      if (
+        params.targetId !== undefined &&
+        principal.targetIds !== undefined &&
+        !principal.targetIds.includes(params.targetId)
+      ) {
+        throw new RelayError("FORBIDDEN", "targetId is not permitted");
+      }
+      if (
+        params.operatorId !== undefined &&
+        principal.operatorIds !== undefined &&
+        !principal.operatorIds.includes(params.operatorId)
+      ) {
+        throw new RelayError("FORBIDDEN", "operatorId is not permitted");
+      }
+    }
+    if (this.authorize !== undefined) {
+      const allowed = this.authorize(params);
+      if (allowed === false) {
+        throw new RelayError("FORBIDDEN", "operation not authorized");
+      }
+    }
+  }
+
+  /** 認可検証（#8）、テナント分離された Room の解決、lease 期限の確認。 */
+  private prepareRoom(
+    operation: RelayOperation,
+    roomId: unknown,
+    context: RelayRequestContext | undefined,
+    actors: {
+      readonly targetId?: string;
+      readonly operatorId?: string;
+      readonly action?: LeaseAction;
+    } = {},
+  ): {
+    readonly room: RoomState;
+    readonly roomId: string;
+    readonly tenantId: string | undefined;
+  } {
+    const id = requireString(roomId, "roomId");
+    const tenantId = this.resolveTenantId(context);
+    this.assertAuthorized({
+      operation,
+      roomId: id,
+      tenantId,
+      principal: context?.principal,
+      ...actors,
+    });
+    const room = this.rooms.get(roomKey(tenantId, id));
     if (room === undefined) {
       throw new RelayError("ROOM_NOT_FOUND", "the room does not exist");
     }
     this.expireLease(room);
-    return room;
+    return { room, roomId: id, tenantId };
+  }
+
+  private runInvariant<T>(
+    hook: RelayInvariantHook<T> | undefined,
+    context: T,
+  ): void {
+    if (hook === undefined) {
+      return;
+    }
+    let result: unknown;
+    try {
+      result = hook(context);
+    } catch (error) {
+      if (error instanceof RelayError) {
+        throw error;
+      }
+      const message =
+        error instanceof Error && error.message.length > 0
+          ? error.message
+          : "invariant violation";
+      throw new RelayError("INVARIANT_VIOLATION", message);
+    }
+    if (
+      isRecord(result) &&
+      result.valid === false &&
+      typeof result.message === "string"
+    ) {
+      throw new RelayError("INVARIANT_VIOLATION", result.message);
+    }
+  }
+
+  private runWithAudit<T>(
+    operation: RelayOperation,
+    roomId: unknown,
+    env: Envelope,
+    context: RelayRequestContext | undefined,
+    actors: { readonly targetId?: string; readonly operatorId?: string },
+    fn: () => T,
+  ): T {
+    if (this.onAudit === undefined) {
+      return fn();
+    }
+    const safeRoomId = typeof roomId === "string" ? roomId : "";
+    const tenantId = context?.principal?.tenantId ?? context?.tenantId;
+    const subject = context?.principal?.subject;
+    const requestId =
+      typeof env.requestId === "string" && env.requestId.length > 0
+        ? env.requestId
+        : undefined;
+    try {
+      const result = fn();
+      this.emitAudit({
+        timestampMs: this.now(),
+        operation,
+        roomId: safeRoomId,
+        tenantId,
+        subject,
+        requestId,
+        ...(actors.targetId !== undefined ? { targetId: actors.targetId } : {}),
+        ...(actors.operatorId !== undefined
+          ? { operatorId: actors.operatorId }
+          : {}),
+        outcome: "ALLOWED",
+      });
+      return result;
+    } catch (error) {
+      if (error instanceof RelayError) {
+        this.emitAudit({
+          timestampMs: this.now(),
+          operation,
+          roomId: safeRoomId,
+          tenantId,
+          subject,
+          requestId,
+          ...(actors.targetId !== undefined
+            ? { targetId: actors.targetId }
+            : {}),
+          ...(actors.operatorId !== undefined
+            ? { operatorId: actors.operatorId }
+            : {}),
+          outcome: "DENIED",
+          errorCode: error.code,
+        });
+      }
+      throw error;
+    }
+  }
+
+  private emitAudit(event: RelayAuditEvent): void {
+    try {
+      this.onAudit?.(event);
+    } catch (error) {
+      this.onListenerError(error);
+    }
   }
 
   /** F-006: 呼び出した操作者が、期限内の保持者であること。 */

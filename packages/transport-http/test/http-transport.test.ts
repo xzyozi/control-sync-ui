@@ -455,3 +455,89 @@ describe("HttpTransport.connect (IF-003 SSE)", () => {
     expect(source.closed).toBe(true);
   });
 });
+
+describe("認証トークンと認可エラー（#8）", () => {
+  it("authToken（静的 / 動的）を指定すると HTTP に Authorization Bearer ヘッダー、SSE に token クエリを付与する", async () => {
+    const snapshot = {
+      controlSeq: 1,
+      control: { sendFilter: { mode: "ALL" }, holderId: null },
+    };
+    const { fetch, calls } = makeFetch(() => response(200, snapshot));
+    FakeEventSource.instances = [];
+    const transport = new HttpTransport({
+      baseUrl: "https://example.test/api",
+      schemaVersion: "1",
+      authToken: () => "secret-tok/1",
+      withCredentials: true,
+      fetch,
+      EventSource: FakeEventSource,
+      AbortController: FakeAbortController,
+    });
+
+    await transport.fetchControl({ roomId: "r", targetId: "t", requestId: "q1" });
+    expect(calls[0]?.init?.headers?.Authorization).toBe("Bearer secret-tok/1");
+    expect(calls[0]?.init?.credentials).toBe("include");
+
+    const conn = transport.connect(
+      { roomId: "r", targetId: "t", requestId: "q2" },
+      {
+        onOpen: () => undefined,
+        onNotification: () => undefined,
+        onError: () => undefined,
+      },
+    );
+    expect(FakeEventSource.instances[0]?.url).toBe(
+      "https://example.test/api/rooms/r/notifications?targetId=t&schemaVersion=1&requestId=q2&token=secret-tok%2F1",
+    );
+    conn.close();
+  });
+
+  it("非同期の authToken が失敗した場合、SSE 接続は UNAUTHORIZED を通知する", async () => {
+    FakeEventSource.instances = [];
+    const { fetch } = makeFetch(() => response(204));
+    const errors: { closed: boolean; code?: string }[] = [];
+    const transport = new HttpTransport({
+      baseUrl: "https://example.test/api",
+      schemaVersion: "1",
+      authToken: async () => {
+        throw new Error("token expired");
+      },
+      fetch,
+      EventSource: FakeEventSource,
+      AbortController: FakeAbortController,
+    });
+
+    transport.connect(
+      { roomId: "r", targetId: "t", requestId: "q1" },
+      {
+        onOpen: () => undefined,
+        onNotification: () => undefined,
+        onError: (e) => errors.push(e),
+      },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(errors).toEqual([{ closed: true, code: "UNAUTHORIZED" }]);
+  });
+
+  it("401 UNAUTHORIZED、403 FORBIDDEN、422 INVARIANT_VIOLATION を ServerErrorCode として分類する", async () => {
+    for (const [status, code] of [
+      [401, "UNAUTHORIZED"],
+      [403, "FORBIDDEN"],
+      [422, "INVARIANT_VIOLATION"],
+    ] as const) {
+      const { fetch } = makeFetch(() =>
+        response(status, { code, message: "denied", requestId: "q" }),
+      );
+      const error = await catchError(
+        makeTransport(fetch).fetchControl({
+          roomId: "r",
+          targetId: "t",
+          requestId: "q",
+        }),
+      );
+      expect(error.code).toBe(code);
+    }
+  });
+});

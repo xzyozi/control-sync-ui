@@ -355,6 +355,32 @@ describe("SyncEngine: 再試行と停止", () => {
     }
   });
 
+  it("認証・認可・不変条件エラー（UNAUTHORIZED、FORBIDDEN、INVARIANT_VIOLATION）は、それぞれの StopReason で再試行せずに停止する", async () => {
+    for (const code of [
+      "UNAUTHORIZED",
+      "FORBIDDEN",
+      "INVARIANT_VIOLATION",
+    ] as const) {
+      const f = createEngine();
+      f.transport.fetchErrors = [new TransportError("rejected", code)];
+      await openConnection(f);
+      expect(f.engine.state).toBe("Stopped");
+      expect(f.stops).toEqual([{ reason: code, error: undefined }]);
+      f.scheduler.advance(60_000);
+      expect(f.transport.connections).toBe(1);
+    }
+  });
+
+  it("presence の UNAUTHORIZED / FORBIDDEN でも Stopped になる", async () => {
+    for (const code of ["UNAUTHORIZED", "FORBIDDEN"] as const) {
+      const f = createEngine();
+      f.transport.presenceError = new TransportError("denied", code);
+      await openConnection(f);
+      expect(f.engine.state).toBe("Stopped");
+      expect(f.stops).toEqual([{ reason: code, error: undefined }]);
+    }
+  });
+
   it("想定外のエラー（ストレージの失敗など）は、未処理の拒否にならず、Stopped（UNEXPECTED）になる", async () => {
     const f = createEngine();
     f.transport.snapshot = ALL_CONTROL;

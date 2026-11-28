@@ -21,6 +21,9 @@ export type SyncState =
 /** 停止（Stopped）の理由。 */
 export type StopReason =
   | "SCHEMA_VERSION_MISMATCH"
+  | "UNAUTHORIZED"
+  | "FORBIDDEN"
+  | "INVARIANT_VIOLATION"
   | "RETRY_LIMIT"
   | "INVALID_REQUEST"
   | "UNEXPECTED";
@@ -286,13 +289,15 @@ export class SyncEngine {
         .sendPresence(this.requestArgs(this.options.newRequestId()))
         .catch((error: unknown) => {
           // presence の失敗は、次の周期で再送する。TTL を超えると、サーバーが
-          // オフラインと判定する。スキーマの不一致だけは、停止する。
+          // オフラインと判定する。スキーマ不一致・認証認可エラーは停止する。
           if (
             generation === this.generation &&
             error instanceof TransportError &&
-            error.code === "SCHEMA_VERSION_MISMATCH"
+            (error.code === "SCHEMA_VERSION_MISMATCH" ||
+              error.code === "UNAUTHORIZED" ||
+              error.code === "FORBIDDEN")
           ) {
-            this.stop("SCHEMA_VERSION_MISMATCH");
+            this.stop(error.code);
           }
         });
     };
@@ -322,8 +327,12 @@ export class SyncEngine {
       this.recordIgnoredEvent("CONNECTION_ERROR");
       return;
     }
-    if (info.code === "SCHEMA_VERSION_MISMATCH") {
-      this.stop("SCHEMA_VERSION_MISMATCH");
+    if (
+      info.code === "SCHEMA_VERSION_MISMATCH" ||
+      info.code === "UNAUTHORIZED" ||
+      info.code === "FORBIDDEN"
+    ) {
+      this.stop(info.code);
       return;
     }
     if (info.closed) {
@@ -456,6 +465,15 @@ export class SyncEngine {
     switch (error.code) {
       case "SCHEMA_VERSION_MISMATCH":
         this.stop("SCHEMA_VERSION_MISMATCH");
+        return;
+      case "UNAUTHORIZED":
+        this.stop("UNAUTHORIZED");
+        return;
+      case "FORBIDDEN":
+        this.stop("FORBIDDEN");
+        return;
+      case "INVARIANT_VIOLATION":
+        this.stop("INVARIANT_VIOLATION");
         return;
       case "STALE_CONTROL_SEQ":
         // 再評価で controlSeq や送信対象が変わるため、次の IF-002 は新しい requestId を使う。

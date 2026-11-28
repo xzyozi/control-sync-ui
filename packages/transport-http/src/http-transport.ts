@@ -15,6 +15,7 @@ import {
   EVENT_SOURCE_CLOSED,
   type AbortControllerConstructor,
   type EventSourceConstructor,
+  type EventSourceLike,
   type FetchLike,
   type ResponseLike,
 } from "./web-types.js";
@@ -26,6 +27,11 @@ declare const AbortController: AbortControllerConstructor;
 declare function setTimeout(callback: () => void, ms: number): unknown;
 declare function clearTimeout(handle: unknown): void;
 
+/** 認証トークンの供給元（静的文字列、同期/非同期プロバイダ）。 */
+export type AuthTokenProvider =
+  | string
+  | (() => string | undefined | Promise<string | undefined>);
+
 export interface HttpTransportOptions {
   /** サーバーの基準 URL（末尾の `/` は、あってもなくてもよい）。 */
   readonly baseUrl: string;
@@ -33,6 +39,10 @@ export interface HttpTransportOptions {
   readonly schemaVersion: string;
   /** V-05: HTTP リクエストのタイムアウト（既定 10 秒）。 */
   readonly timeoutMs?: number;
+  /** Bearer 認証トークン（IF §3、#8）。HTTP はヘッダー、SSE は `token` クエリで送る。 */
+  readonly authToken?: AuthTokenProvider;
+  /** Cookie 等を使う場合の資格情報送信設定（省略時は既定動作）。 */
+  readonly withCredentials?: boolean;
   /** 注入用。省略した場合は、グローバルを使う。 */
   readonly fetch?: FetchLike;
   readonly EventSource?: EventSourceConstructor;
@@ -44,12 +54,23 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const SERVER_ERROR_CODES = new Set<ServerErrorCode>([
   "INVALID_MESSAGE",
   "SCHEMA_VERSION_MISMATCH",
+  "UNAUTHORIZED",
+  "FORBIDDEN",
   "LOCK_NOT_HELD",
   "ROOM_NOT_FOUND",
   "STALE_CONTROL_SEQ",
   "LOCK_HELD_BY_OTHER",
   "TARGET_OFFLINE",
+  "INVARIANT_VIOLATION",
 ]);
+
+function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -226,34 +247,91 @@ export class HttpTransport implements TransportPort {
     args: { roomId: string; targetId: string; requestId: string },
     handlers: ConnectionHandlers,
   ): NotificationConnection {
-    // EventSource は、独自ヘッダーを送れないため、共通項目は、クエリパラメータで送る。
-    const params = [
-      `targetId=${encodeURIComponent(args.targetId)}`,
-      `schemaVersion=${encodeURIComponent(this.options.schemaVersion)}`,
-      `requestId=${encodeURIComponent(args.requestId)}`,
-    ].join("&");
-    const source = new this.eventSourceCtor(
-      `${this.roomUrl(args.roomId)}/notifications?${params}`,
-    );
+    const openWithToken = (token: string | undefined): EventSourceLike => {
+      // EventSource は、独自ヘッダーを送れないため、共通項目・トークンは、クエリパラメータで送る。
+      const params = [
+        `targetId=${encodeURIComponent(args.targetId)}`,
+        `schemaVersion=${encodeURIComponent(this.options.schemaVersion)}`,
+        `requestId=${encodeURIComponent(args.requestId)}`,
+        ...(typeof token === "string" && token.length > 0
+          ? [`token=${encodeURIComponent(token)}`]
+          : []),
+      ].join("&");
+      const url = `${this.roomUrl(args.roomId)}/notifications?${params}`;
+      const source =
+        this.options.withCredentials !== undefined
+          ? new this.eventSourceCtor(url, {
+              withCredentials: this.options.withCredentials,
+            })
+          : new this.eventSourceCtor(url);
 
-    source.onopen = () => handlers.onOpen();
-    source.onmessage = (event) => {
-      const parsed = this.parseNotification(event.data);
-      if (parsed.kind === "notification") {
-        handlers.onNotification(parsed.notification);
-      } else if (parsed.kind === "mismatch") {
-        source.close();
-        handlers.onError({ closed: true, code: "SCHEMA_VERSION_MISMATCH" });
-      }
+      source.onopen = () => handlers.onOpen();
+      source.onmessage = (event) => {
+        const parsed = this.parseNotification(event.data);
+        if (parsed.kind === "notification") {
+          handlers.onNotification(parsed.notification);
+        } else if (parsed.kind === "mismatch") {
+          source.close();
+          handlers.onError({ closed: true, code: "SCHEMA_VERSION_MISMATCH" });
+        }
+      };
+      source.onerror = () => {
+        // CLOSED の場合は、ブラウザが再接続しない。クライアントは、IF-001 で原因を判別する。
+        handlers.onError({ closed: source.readyState === EVENT_SOURCE_CLOSED });
+      };
+      return source;
     };
-    source.onerror = () => {
-      // CLOSED の場合は、ブラウザが再接続しない。クライアントは、IF-001 で原因を判別する。
-      handlers.onError({ closed: source.readyState === EVENT_SOURCE_CLOSED });
+
+    const rawToken =
+      typeof this.options.authToken === "function"
+        ? this.options.authToken()
+        : this.options.authToken;
+
+    if (!isPromiseLike<string | undefined>(rawToken)) {
+      const source = openWithToken(rawToken);
+      return { close: () => source.close() };
+    }
+
+    let closed = false;
+    let activeSource: EventSourceLike | null = null;
+    void rawToken.then(
+      (token) => {
+        if (closed) {
+          return;
+        }
+        activeSource = openWithToken(token);
+      },
+      () => {
+        if (closed) {
+          return;
+        }
+        handlers.onError({ closed: true, code: "UNAUTHORIZED" });
+      },
+    );
+    return {
+      close: () => {
+        closed = true;
+        activeSource?.close();
+      },
     };
-    return { close: () => source.close() };
   }
 
   // ---- 内部 ----
+
+  private async resolveAuthToken(): Promise<string | undefined> {
+    if (this.options.authToken === undefined) {
+      return undefined;
+    }
+    try {
+      const token =
+        typeof this.options.authToken === "function"
+          ? await this.options.authToken()
+          : this.options.authToken;
+      return typeof token === "string" && token.length > 0 ? token : undefined;
+    } catch {
+      throw new TransportError("failed to resolve auth token", "UNAUTHORIZED");
+    }
+  }
 
   private roomUrl(roomId: string): string {
     return `${this.base}/rooms/${encodeURIComponent(roomId)}`;
@@ -311,6 +389,7 @@ export class HttpTransport implements TransportPort {
     init: { method: string; body?: string },
     requestId: string,
   ): Promise<unknown> {
+    const token = await this.resolveAuthToken();
     const controller = new this.abortControllerCtor();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: ResponseLike;
@@ -321,10 +400,14 @@ export class HttpTransport implements TransportPort {
         headers: {
           "X-Schema-Version": this.options.schemaVersion,
           "X-Request-Id": requestId,
+          ...(token !== undefined ? { Authorization: `Bearer ${token}` } : {}),
           ...(init.body !== undefined
             ? { "Content-Type": "application/json" }
             : {}),
         },
+        ...(this.options.withCredentials === true
+          ? { credentials: "include" }
+          : {}),
         ...(init.body !== undefined ? { body: init.body } : {}),
         signal: controller.signal,
       });

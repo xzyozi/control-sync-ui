@@ -621,4 +621,155 @@ describe("Relay HTTP / SSE サーバー（IF-001〜IF-006）", () => {
     controller.close();
     sseController.close();
   });
+
+  it("認証・認可・不変条件検証（#8）が HTTP / SSE 境界で機能する", async () => {
+    const relay = new RelayCore({
+      requireTenant: true,
+      onValidatePushEvents: ({ events }) => {
+        for (const ev of events) {
+          if (ev.payload.forbidden === true) {
+            return { valid: false, message: "forbidden payload" };
+          }
+        }
+      },
+    });
+    relay.createRoom("room-a", { tenantId: "tenant-1" });
+
+    const tokens = new Map<
+      string,
+      {
+        subject: string;
+        tenantId: string;
+        targetIds?: string[];
+        operatorIds?: string[];
+      }
+    >([
+      [
+        "tok-target",
+        {
+          subject: "target-user",
+          tenantId: "tenant-1",
+          targetIds: ["t1"],
+        },
+      ],
+      [
+        "tok-operator",
+        {
+          subject: "op-user",
+          tenantId: "tenant-1",
+          operatorIds: ["op-1"],
+        },
+      ],
+      [
+        "tok-other-tenant",
+        {
+          subject: "other",
+          tenantId: "tenant-2",
+        },
+      ],
+    ]);
+
+    const server = await startRelayServer(relay, {
+      authenticate: ({ token }) =>
+        token !== undefined ? tokens.get(token) : null,
+    });
+    servers.push(server);
+
+    // 1. CORS プリフライトは認証なしでも 204 かつ Authorization ヘッダーを許可する
+    const preflight = await fetch(`${server.baseUrl}/rooms/room-a/control`, {
+      method: "OPTIONS",
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("Access-Control-Allow-Headers")).toContain(
+      "Authorization",
+    );
+
+    // 2. トークンなし・不正トークンは 401 UNAUTHORIZED
+    const unauth = await jsonRequest(
+      server.baseUrl,
+      "/rooms/room-a/control?targetId=t1",
+    );
+    expect(unauth.status).toBe(401);
+    expect(unauth.body).toMatchObject({ code: "UNAUTHORIZED" });
+
+    const unauthSse = await fetch(
+      `${server.baseUrl}/rooms/room-a/notifications?targetId=t1&schemaVersion=1&requestId=sse-noauth`,
+    );
+    expect(unauthSse.status).toBe(401);
+    expect(await unauthSse.json()).toMatchObject({ code: "UNAUTHORIZED" });
+
+    // 3. 別テナントは同名の room-a が見えず 404 ROOM_NOT_FOUND
+    const wrongTenant = await jsonRequest(
+      server.baseUrl,
+      "/rooms/room-a/control?targetId=t1",
+      { headers: { Authorization: "Bearer tok-other-tenant" } },
+    );
+    expect(wrongTenant.status).toBe(404);
+
+    // 4. targetIds 外のなりすましは 403 FORBIDDEN
+    const spoofTarget = await jsonRequest(
+      server.baseUrl,
+      "/rooms/room-a/presence",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer tok-target" },
+        body: { targetId: "t2" },
+      },
+    );
+    expect(spoofTarget.status).toBe(403);
+    expect(spoofTarget.body).toMatchObject({ code: "FORBIDDEN" });
+
+    // 5. SSE は token クエリで認証でき、不変条件違反は 422 INVARIANT_VIOLATION
+    const controller = new AbortController();
+    const sseRes = await fetch(
+      `${server.baseUrl}/rooms/room-a/notifications?targetId=t1&schemaVersion=1&requestId=sse-auth&token=tok-target`,
+      { signal: controller.signal },
+    );
+    expect(sseRes.status).toBe(200);
+    const sse = new SseReader(sseRes);
+
+    const presence = await jsonRequest(
+      server.baseUrl,
+      "/rooms/room-a/presence",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer tok-target" },
+        body: { targetId: "t1" },
+      },
+    );
+    expect(presence.status).toBe(204);
+
+    const lease = await jsonRequest(server.baseUrl, "/rooms/room-a/lease", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok-operator" },
+      body: { operatorId: "op-1", action: "ACQUIRE" },
+    });
+    expect(lease.status).toBe(200);
+    expect(await sse.nextEvent()).toMatchObject({
+      type: "CONTROL_UPDATED",
+      controlSeq: 1,
+    });
+
+    const invalidEvent = await jsonRequest(
+      server.baseUrl,
+      "/rooms/room-a/events",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer tok-target" },
+        body: {
+          targetId: "t1",
+          controlSeq: 1,
+          events: [{ eventId: "e-bad", payload: { forbidden: true } }],
+        },
+      },
+    );
+    expect(invalidEvent.status).toBe(422);
+    expect(invalidEvent.body).toMatchObject({
+      code: "INVARIANT_VIOLATION",
+      message: "forbidden payload",
+    });
+
+    await sse.close();
+    controller.abort();
+  });
 });

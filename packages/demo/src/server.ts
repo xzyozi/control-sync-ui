@@ -164,30 +164,37 @@ export async function startDemoServer(
 
   // RelayCore の契約を変えずにデモ画面用の状態サマリを収集する薄いラッパー。
   const observedRelay = {
-    createRoom: (roomId: string) => relay.createRoom(roomId),
+    createRoom: (
+      roomId: string,
+      roomOpts?: Parameters<RelayCore["createRoom"]>[1],
+    ) => relay.createRoom(roomId, roomOpts),
     tick: () => relay.tick(),
     nextExpiry: () => relay.nextExpiry(),
     getControl: (
       roomId: string,
       request: { targetId: string },
       env: Parameters<RelayCore["getControl"]>[2],
-    ) => relay.getControl(roomId, request, env),
+      context?: Parameters<RelayCore["getControl"]>[3],
+    ) => relay.getControl(roomId, request, env, context),
     lease: (
       roomId: string,
       request: { operatorId: string; action: string },
       env: Parameters<RelayCore["lease"]>[2],
-    ) => relay.lease(roomId, request, env),
+      context?: Parameters<RelayCore["lease"]>[3],
+    ) => relay.lease(roomId, request, env, context),
     changeControl: (
       roomId: string,
       request: { operatorId: string; targetId: string; sendFilter: unknown },
       env: Parameters<RelayCore["changeControl"]>[2],
-    ) => relay.changeControl(roomId, request, env),
+      context?: Parameters<RelayCore["changeControl"]>[3],
+    ) => relay.changeControl(roomId, request, env, context),
     presence: (
       roomId: string,
       request: { targetId: string },
       env: Parameters<RelayCore["presence"]>[2],
+      context?: Parameters<RelayCore["presence"]>[3],
     ) => {
-      relay.presence(roomId, request, env);
+      relay.presence(roomId, request, env, context);
       getCounter(presenceExpiry, roomId).set(
         request.targetId,
         now() + presenceTtlMs,
@@ -198,8 +205,9 @@ export async function startDemoServer(
       request: { targetId: string },
       listener: Parameters<RelayCore["connect"]>[2],
       env: Parameters<RelayCore["connect"]>[3],
+      context?: Parameters<RelayCore["connect"]>[4],
     ) => {
-      const closeInner = relay.connect(roomId, request, listener, env);
+      const closeInner = relay.connect(roomId, request, listener, env, context);
       const counts = getCounter(sseCounts, roomId);
       counts.set(request.targetId, (counts.get(request.targetId) ?? 0) + 1);
       let closed = false;
@@ -221,8 +229,9 @@ export async function startDemoServer(
       roomId: string,
       request: { targetId: string; controlSeq: number; events: unknown },
       env: Parameters<RelayCore["pushEvents"]>[2],
+      context?: Parameters<RelayCore["pushEvents"]>[3],
     ) => {
-      const res = relay.pushEvents(roomId, request, env);
+      const res = relay.pushEvents(roomId, request, env, context);
       let log = roomEvents.get(roomId);
       if (log === undefined) {
         log = new Map();

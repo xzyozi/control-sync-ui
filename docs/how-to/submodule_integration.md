@@ -4,7 +4,7 @@ document_type: "operation_procedure"
 document_role: "procedure"
 ssot_scope: "operation"
 status: "approved"
-version: "1.1"
+version: "1.2"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -136,6 +136,7 @@ export async function startSyncClient(params: {
   const transport = new HttpTransport({
     baseUrl: params.baseUrl,
     schemaVersion: "1",
+    // 外部公開時は authToken: () => getAccessToken() 等で Bearer / SSE token を注入する（#8）
   });
 
   let seq = 0;
@@ -168,9 +169,22 @@ export async function startSyncClient(params: {
 ```ts
 import { RelayCore, startRelayServer } from "@csu/relay";
 
-const relay = new RelayCore({ schemaVersion: "1" });
-relay.createRoom("room-1");
-const server = await startRelayServer(relay, { port: 4173 });
+const relay = new RelayCore({
+  schemaVersion: "1",
+  // 外部公開時はテナント分離・不変条件検証フックを追加する（#8）
+  requireTenant: true,
+  onValidatePushEvents: ({ events }) => {
+    // 例: payload 構造の不変条件をチェック
+    if (events.some((e) => typeof e.payload.type !== "string")) {
+      return { valid: false, message: "payload.type is required" };
+    }
+  },
+});
+relay.createRoom("room-1", { tenantId: "tenant-1" });
+const server = await startRelayServer(relay, {
+  port: 4173,
+  // authenticate: async ({ token }) => verifyToken(token),
+});
 ```
 
 ---
@@ -201,3 +215,4 @@ const server = await startRelayServer(relay, { port: 4173 });
 | :------ | :--------- | :----- | :-------------------------------------------------------------------- |
 | Rev.1.0 | 2026-11-28 | xzyozi | ADR-008（`accepted`）に基づき新規作成。                               |
 | Rev.1.1 | 2026-11-28 | xzyozi | §2 にタグ固定例、§6 に版の更新・互換性確認（CSU-ENV-001 §4.3）を追加。 |
+| Rev.1.2 | 2026-11-28 | xzyozi | §4.1・§4.2 に #8（`authToken`、`requireTenant`、`onValidatePushEvents`、`authenticate`）の組み込み例を追記。 |
