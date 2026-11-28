@@ -483,7 +483,7 @@ describe("IndexedDbStoragePort", () => {
         const innerReq = factory.open(name, version);
         let onsuccessHandler = innerReq.onsuccess;
         const proxyReq: IdbOpenDbRequestLike = {
-          get result() {
+          get result(): IdbDatabaseLike {
             const db = innerReq.result;
             return {
               get version() {
