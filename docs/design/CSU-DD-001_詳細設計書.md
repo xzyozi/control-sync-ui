@@ -355,6 +355,7 @@ sequenceDiagram
 | TR-121 | F-001        | 同じ `eventId` を `DomainStore.apply` で再追記しても、エラーにならず、追記済みとして扱われ、状態は更新されず、現在の状態が返る。                                                                                                                                                                                                                                           | 冪等性・境界     | TC-121           |
 | TR-122 | F-001        | `createdAt` を省略した場合は、追記時の時刻が設定され、指定した場合は、その値が使われる。                                                                                                                                                                                                                                                                                   | 正常             | TC-122           |
 | TR-123 | F-002        | `controlSeq` が NaN、負の値、小数、無限大の場合は `RangeError` になり、状態は変更されず、その後も古い応答は反映されない。                                                                                                                                                                                                                                                  | 異常・境界       | TC-123           |
+| TR-124 | F-004        | `SyncEngine` が `UNAUTHORIZED`、`FORBIDDEN`、`INVARIANT_VIOLATION` を受けた場合、再試行せず対応する `StopReason` で `Stopped` になり、永続状態は変化しない。                                                                                                                                                                                                             | 認証・認可・停止 | TC-124           |
 
 ### 5.2 適用する品質ゲート
 

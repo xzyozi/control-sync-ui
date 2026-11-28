@@ -12,7 +12,7 @@ import {
   startRelayServer,
 } from "@csu/relay";
 import { IndexedDbStoragePort } from "@csu/storage-indexeddb";
-import { HttpTransport } from "@csu/transport-http";
+import { type AuthTokenProvider, HttpTransport } from "@csu/transport-http";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   FakeIndexedDbFactory,
@@ -88,6 +88,7 @@ async function createTargetClient(args: {
   idbFactory?: FakeIndexedDbFactory;
   schemaVersion?: string;
   presenceIntervalMs?: number;
+  authToken?: AuthTokenProvider;
 }) {
   const factory = args.idbFactory ?? new FakeIndexedDbFactory();
   const storage = await IndexedDbStoragePort.open({
@@ -109,6 +110,7 @@ async function createTargetClient(args: {
   const transport = new HttpTransport({
     baseUrl: args.baseUrl,
     schemaVersion: args.schemaVersion ?? DEMO_SCHEMA_VERSION,
+    ...(args.authToken !== undefined ? { authToken: args.authToken } : {}),
     EventSource: NodeSseEventSource,
   });
 
@@ -428,5 +430,113 @@ describe("4パッケージ結合 Protocol E2E (FR-01〜FR-05)", () => {
     expect(target.stoppedReasons).toEqual(["SCHEMA_VERSION_MISMATCH"]);
     expect(target.domain.state.total).toBe(42);
     expect((await target.storage.readPending("room-a")).length).toBe(1);
+  });
+
+  it("#8 / TC-014〜TC-017 / TC-124 / TC-308: 認証・テナント分離・不変条件検証が 4 パッケージ結合で連動する", async () => {
+    const relay = new RelayCore({
+      schemaVersion: DEMO_SCHEMA_VERSION,
+      requireTenant: true,
+      onValidatePushEvents: ({ events }) => {
+        for (const ev of events) {
+          if (typeof ev.payload.amount !== "number" || ev.payload.amount <= 0) {
+            return { valid: false, message: "amount must be positive" };
+          }
+        }
+      },
+    });
+    relay.createRoom("room-a", { tenantId: "tenant-1" });
+    relay.createRoom("room-a", { tenantId: "tenant-2" });
+
+    const principals = new Map([
+      [
+        "tok-t1",
+        { subject: "u-t1", tenantId: "tenant-1", targetIds: ["t-1"] },
+      ],
+      [
+        "tok-op1",
+        { subject: "u-op1", tenantId: "tenant-1", operatorIds: ["op-1"] },
+      ],
+      [
+        "tok-t2",
+        { subject: "u-t2", tenantId: "tenant-2", targetIds: ["t-1"] },
+      ],
+    ]);
+    const server = await startRelayServer(relay, {
+      authenticate: ({ token }) =>
+        token !== undefined ? principals.get(token) : null,
+    });
+    servers.push(server);
+
+    // 1. トークンなしの対象端末は UNAUTHORIZED で安全に停止する。
+    const unauthTarget = await createTargetClient({
+      baseUrl: server.baseUrl,
+      roomId: "room-a",
+      targetId: "t-1",
+    });
+    unauthTarget.engine.connect();
+    await waitUntil(() => unauthTarget.engine.state === "Stopped");
+    expect(unauthTarget.stoppedReasons).toEqual(["UNAUTHORIZED"]);
+
+    // 2. 認証済みの tenant-1 / tenant-2 端末は同名 room-a でも分離される。
+    const target1 = await createTargetClient({
+      baseUrl: server.baseUrl,
+      roomId: "room-a",
+      targetId: "t-1",
+      authToken: "tok-t1",
+    });
+    const target2 = await createTargetClient({
+      baseUrl: server.baseUrl,
+      roomId: "room-a",
+      targetId: "t-1",
+      authToken: "tok-t2",
+    });
+    target1.engine.connect();
+    target2.engine.connect();
+    await waitUntil(
+      () =>
+        target1.engine.state === "Ready" && target2.engine.state === "Ready",
+    );
+
+    const leaseRes = await postJson(
+      server.baseUrl,
+      "/rooms/room-a/lease",
+      { operatorId: "op-1", action: "ACQUIRE" },
+      { Authorization: "Bearer tok-op1" },
+    );
+    expect(leaseRes.status).toBe(200);
+
+    const ctrlRes = await postJson(
+      server.baseUrl,
+      "/rooms/room-a/control",
+      {
+        operatorId: "op-1",
+        targetId: "t-1",
+        sendFilter: { mode: "ALL" },
+      },
+      { Authorization: "Bearer tok-op1" },
+    );
+    expect(ctrlRes.status).toBe(200);
+
+    await waitUntil(() => target1.control.getControlSeq() === 2);
+    expect(target2.control.getControlSeq()).toBe(0);
+
+    // 3. 妥当なイベントは送信され、不変条件違反（amount <= 0）は INVARIANT_VIOLATION で停止・未送信保持される。
+    await target1.domain.apply({
+      eventId: "e-good",
+      payload: { type: "add", amount: 5 },
+    });
+    target1.engine.notifyLocalEvents();
+    await waitUntil(
+      async () => (await target1.storage.readPending("room-a")).length === 0,
+    );
+
+    await target1.domain.apply({
+      eventId: "e-bad",
+      payload: { type: "add", amount: -1 },
+    });
+    target1.engine.notifyLocalEvents();
+    await waitUntil(() => target1.engine.state === "Stopped");
+    expect(target1.stoppedReasons).toEqual(["INVARIANT_VIOLATION"]);
+    expect((await target1.storage.readPending("room-a")).length).toBe(1);
   });
 });
