@@ -4,7 +4,7 @@ document_type: "operation_procedure"
 document_role: "procedure"
 ssot_scope: "operation"
 status: "draft"
-version: "1.0"
+version: "1.1"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -38,6 +38,7 @@ related_documents:
 
 ```bash
 git submodule add <repository-url> libs/control-sync-ui
+git -C libs/control-sync-ui checkout v0.1.0   # リリース済みタグに固定する場合
 git submodule update --init --recursive
 
 # サブモジュール内でロックファイル固定インストールとビルドを実行する
@@ -186,8 +187,17 @@ const server = await startRelayServer(relay, { port: 4173 });
 
 ---
 
-## 6. 改訂履歴 (Change Log)
+## 6. 版の更新と互換性確認
 
-| 版数    | 改訂日     | 変更者 | 変更内容・変更理由 (Why)                   |
-| :------ | :--------- | :----- | :----------------------------------------- |
-| Rev.1.0 | 2026-11-28 | xzyozi | ADR-008（`accepted`）に基づき新規作成。    |
+- 版の方針の正本は [CSU-ENV-001](../setup/CSU-ENV-001_環境・開発基盤仕様書.md) §4.3 です。
+- サブモジュールを更新する際は、`vX.Y.Z` タグを切り替えたうえで `npm --prefix libs/control-sync-ui ci && npm --prefix libs/control-sync-ui run build` を再実行してください。
+- `schemaVersion`（通信契約）および `storageVersion`（IndexedDB 保存形式）は v0.1 で `"1"` 固定です。破壊的変更やバージョン更新時はリリースノートの移行手順を確認してください。
+
+---
+
+## 7. 改訂履歴 (Change Log)
+
+| 版数    | 改訂日     | 変更者 | 変更内容・変更理由 (Why)                                              |
+| :------ | :--------- | :----- | :-------------------------------------------------------------------- |
+| Rev.1.0 | 2026-11-28 | xzyozi | ADR-008（`accepted`）に基づき新規作成。                               |
+| Rev.1.1 | 2026-11-28 | xzyozi | §2 にタグ固定例、§6 に版の更新・互換性確認（CSU-ENV-001 §4.3）を追加。 |
