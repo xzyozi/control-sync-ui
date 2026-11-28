@@ -5,15 +5,27 @@ import type { Envelope, Notification } from "./types";
 import { isRecord } from "./validation";
 
 declare const console: { error: (...data: unknown[]) => void };
+declare const TextDecoder: new (
+  label?: string,
+  options?: { fatal?: boolean },
+) => {
+  decode(input?: Uint8Array, options?: { stream?: boolean }): string;
+};
 declare function setTimeout(callback: () => void, ms: number): unknown;
 declare function clearTimeout(handle: unknown): void;
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 const ROOM_ROUTE_RE =
   /^\/rooms\/([^/]+)\/(control|events|notifications|presence|lease)$/;
+// HTTP ヘッダー値として安全な可視 ASCII と半角スペースのみを許可する（CR/LF や非 ASCII で ERR_INVALID_CHAR を防ぐ）。
+const SAFE_HEADER_VALUE_RE = /^[\x20-\x7E]+$/;
 
 export interface RelayHttpOptions {
-  /** 現在時刻（ミリ秒）の供給元。lease 期限タイマーの計算に使う。 */
+  /**
+   * 現在時刻（ミリ秒）の供給元。lease 期限タイマーの計算に使う。
+   * テスト等で `RelayCore` に偽時計を渡す場合は、同じ `now` 関数を指定すること
+   * （`RelayCore` より進んだ時刻を返すと、期限前でも即時再試行が繰り返される）。
+   */
   readonly now?: () => number;
   /** POST 本文の最大バイト数（既定 1 MiB）。 */
   readonly maxBodyBytes?: number;
@@ -83,30 +95,32 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return undefined;
 }
 
+function isSafeHeaderValue(value: string | undefined): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    SAFE_HEADER_VALUE_RE.test(value)
+  );
+}
+
+function assertSafeRequestId(requestId: string | undefined): void {
+  if (
+    requestId !== undefined &&
+    requestId.length > 0 &&
+    !SAFE_HEADER_VALUE_RE.test(requestId)
+  ) {
+    throw new RelayError(
+      "INVALID_MESSAGE",
+      "requestId must contain only printable ASCII characters",
+    );
+  }
+}
+
 function httpEnvelope(req: IncomingRequest): Envelope {
   return {
     schemaVersion: headerValue(req.headers["x-schema-version"]),
     requestId: headerValue(req.headers["x-request-id"]),
   };
-}
-
-function chunkSizeAndText(chunk: unknown): { bytes: number; text: string } {
-  if (typeof chunk === "string") {
-    return { bytes: chunk.length, text: chunk };
-  }
-  if (
-    typeof chunk === "object" &&
-    chunk !== null &&
-    "byteLength" in chunk &&
-    typeof (chunk as { byteLength: unknown }).byteLength === "number"
-  ) {
-    const buf = chunk as {
-      readonly byteLength: number;
-      toString(encoding?: string): string;
-    };
-    return { bytes: buf.byteLength, text: buf.toString("utf8") };
-  }
-  throw new RelayError("INVALID_MESSAGE", "unsupported request body chunk");
 }
 
 function readJsonBody(
@@ -115,6 +129,7 @@ function readJsonBody(
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: string[] = [];
+    const decoder = new TextDecoder("utf-8", { fatal: true });
     let totalBytes = 0;
     let settled = false;
 
@@ -122,6 +137,8 @@ function readJsonBody(
       req.removeListener?.("data", onData);
       req.removeListener?.("end", onEnd);
       req.removeListener?.("error", onError);
+      req.removeListener?.("close", onAbort);
+      req.removeListener?.("aborted", onAbort);
     };
 
     const fail = (error: unknown) => {
@@ -135,17 +152,35 @@ function readJsonBody(
 
     const onData = (chunk: unknown) => {
       try {
-        const { bytes, text } = chunkSizeAndText(chunk);
-        totalBytes += bytes;
-        if (totalBytes > maxBodyBytes) {
-          // ソケットを即座に破棄すると 400 応答前に切断されるため、破棄せず読み捨ててエラー応答を返す。
-          req.resume?.();
-          fail(new RelayError("INVALID_MESSAGE", "request body too large"));
+        let bytes: number;
+        let text: string;
+        if (chunk instanceof Uint8Array) {
+          bytes = chunk.byteLength;
+          totalBytes += bytes;
+          if (totalBytes > maxBodyBytes) {
+            // ソケットを即座に破棄すると 400 応答前に切断されるため、破棄せず読み捨ててエラー応答を返す。
+            req.resume?.();
+            fail(new RelayError("INVALID_MESSAGE", "request body too large"));
+            return;
+          }
+          text = decoder.decode(chunk, { stream: true });
+        } else if (typeof chunk === "string") {
+          bytes = chunk.length;
+          totalBytes += bytes;
+          if (totalBytes > maxBodyBytes) {
+            req.resume?.();
+            fail(new RelayError("INVALID_MESSAGE", "request body too large"));
+            return;
+          }
+          text = chunk;
+        } else {
+          fail(new RelayError("INVALID_MESSAGE", "unsupported request body chunk"));
           return;
         }
         chunks.push(text);
-      } catch (error) {
-        fail(error);
+      } catch {
+        req.resume?.();
+        fail(new RelayError("INVALID_MESSAGE", "request body must be valid UTF-8"));
       }
     };
 
@@ -155,6 +190,12 @@ function readJsonBody(
       }
       settled = true;
       cleanup();
+      try {
+        chunks.push(decoder.decode());
+      } catch {
+        reject(new RelayError("INVALID_MESSAGE", "request body must be valid UTF-8"));
+        return;
+      }
       const raw = chunks.join("");
       if (raw.length === 0) {
         reject(new RelayError("INVALID_MESSAGE", "request body is required"));
@@ -180,9 +221,20 @@ function readJsonBody(
       fail(error);
     };
 
+    const onAbort = () => {
+      fail(
+        new RelayError(
+          "INVALID_MESSAGE",
+          "request aborted before body completed",
+        ),
+      );
+    };
+
     req.on("data", onData);
     req.on("end", onEnd);
     req.on("error", onError);
+    req.on("close", onAbort);
+    req.on("aborted", onAbort);
   });
 }
 
@@ -215,7 +267,7 @@ function writeJson(
   res.statusCode = status;
   applyCors(res, corsOrigin);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  if (requestId !== undefined && requestId.length > 0) {
+  if (isSafeHeaderValue(requestId)) {
     res.setHeader("X-Request-Id", requestId);
   }
   res.end(JSON.stringify(body));
@@ -232,7 +284,7 @@ function writeEmpty(
   }
   res.statusCode = status;
   applyCors(res, corsOrigin);
-  if (requestId !== undefined && requestId.length > 0) {
+  if (isSafeHeaderValue(requestId)) {
     res.setHeader("X-Request-Id", requestId);
   }
   res.end();
@@ -297,7 +349,6 @@ export function createRelayHandler(
   };
 
   const openSseStream = (
-    req: IncomingRequest,
     res: ServerResponseLike,
     roomId: string,
     targetId: string,
@@ -315,7 +366,11 @@ export function createRelayHandler(
       disconnectRelay?.();
       disconnectRelay = null;
       if (!res.writableEnded) {
-        res.end();
+        try {
+          res.end();
+        } catch {
+          // 既に閉じられたソケットの終了失敗は無視する。
+        }
       }
     };
 
@@ -333,16 +388,24 @@ export function createRelayHandler(
 
     // 共通項目・Room・targetId の検証を先に行い、失敗時は通常の HTTP エラーを返す（IF §4.3.3）。
     disconnectRelay = relay.connect(roomId, { targetId }, listener, env);
+    if (closed) {
+      disconnectRelay();
+      disconnectRelay = null;
+      throw new Error("relay handler is closed");
+    }
     activeStreams.add(closeStream);
 
-    // GET リクエスト完了時ではなく、レスポンス切断時に購読を解除する。
+    // GET リクエスト完了時ではなく、レスポンス切断・エラー時に購読を解除する。
     res.on("close", closeStream);
+    res.on("error", closeStream);
 
     const headers: Record<string, string> = {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      ...(env.requestId ? { "X-Request-Id": env.requestId } : {}),
+      ...(isSafeHeaderValue(env.requestId)
+        ? { "X-Request-Id": env.requestId }
+        : {}),
       ...(corsOrigin !== null
         ? {
             "Access-Control-Allow-Origin": corsOrigin,
@@ -350,16 +413,21 @@ export function createRelayHandler(
           }
         : {}),
     };
-    if (res.writeHead !== undefined) {
-      res.writeHead(200, headers);
-    } else {
-      res.statusCode = 200;
-      for (const [k, v] of Object.entries(headers)) {
-        res.setHeader(k, v);
+    try {
+      if (res.writeHead !== undefined) {
+        res.writeHead(200, headers);
+      } else {
+        res.statusCode = 200;
+        for (const [k, v] of Object.entries(headers)) {
+          res.setHeader(k, v);
+        }
       }
+      // 接続確立をクライアント側へ即座に伝える。
+      res.write(": connected\n\n");
+    } catch (error) {
+      closeStream();
+      throw error;
     }
-    // 接続確立をクライアント側へ即座に伝える。
-    res.write(": connected\n\n");
   };
 
   const handleRequest = async (
@@ -368,6 +436,21 @@ export function createRelayHandler(
   ): Promise<void> => {
     const method = (req.method ?? "GET").toUpperCase();
     let requestId = headerValue(req.headers["x-request-id"]);
+
+    if (closed) {
+      writeJson(
+        res,
+        503,
+        {
+          code: "SERVER_CLOSED",
+          message: "server is shutting down",
+          requestId: isSafeHeaderValue(requestId) ? requestId : "",
+        },
+        requestId,
+        corsOrigin,
+      );
+      return;
+    }
 
     if (method === "OPTIONS") {
       writeEmpty(res, 204, requestId, corsOrigin);
@@ -384,7 +467,7 @@ export function createRelayHandler(
           {
             code: "NOT_FOUND",
             message: "route not found",
-            requestId: requestId ?? "",
+            requestId: isSafeHeaderValue(requestId) ? requestId : "",
           },
           requestId,
           corsOrigin,
@@ -402,6 +485,7 @@ export function createRelayHandler(
           requestId: query.get("requestId"),
         };
         requestId = sseEnv.requestId;
+        assertSafeRequestId(requestId);
         if (method !== "GET") {
           res.setHeader("Allow", "GET, OPTIONS");
           writeJson(
@@ -417,19 +501,14 @@ export function createRelayHandler(
           );
           return;
         }
-        openSseStream(
-          req,
-          res,
-          roomId,
-          query.get("targetId") ?? "",
-          sseEnv,
-        );
+        openSseStream(res, roomId, query.get("targetId") ?? "", sseEnv);
         scheduleLeaseExpiry();
         return;
       }
 
       const env = httpEnvelope(req);
       requestId = env.requestId;
+      assertSafeRequestId(requestId);
 
       if (endpoint === "control") {
         if (method === "GET") {
@@ -529,6 +608,7 @@ export function createRelayHandler(
         }
       }
     } catch (error) {
+      const safeRequestId = isSafeHeaderValue(requestId) ? requestId : "";
       if (error instanceof RelayError) {
         scheduleLeaseExpiry();
         writeJson(
@@ -537,34 +617,40 @@ export function createRelayHandler(
           {
             code: error.code,
             message: error.message,
-            requestId: requestId ?? "",
+            requestId: safeRequestId,
             ...(error.controlSeq !== undefined
               ? { controlSeq: error.controlSeq }
               : {}),
           },
-          requestId,
+          safeRequestId,
           corsOrigin,
         );
         return;
       }
       onInternalError(error);
-      writeJson(
-        res,
-        500,
-        {
-          code: "INTERNAL_ERROR",
-          message: "internal server error",
-          requestId: requestId ?? "",
-        },
-        requestId,
-        corsOrigin,
-      );
+      try {
+        writeJson(
+          res,
+          500,
+          {
+            code: "INTERNAL_ERROR",
+            message: "internal server error",
+            requestId: safeRequestId,
+          },
+          safeRequestId,
+          corsOrigin,
+        );
+      } catch (writeError) {
+        onInternalError(writeError);
+      }
     }
   };
 
   return {
     handler: (req, res) => {
-      void handleRequest(req, res);
+      void handleRequest(req, res).catch((error) => {
+        onInternalError(error);
+      });
     },
     scheduleLeaseExpiry,
     close,

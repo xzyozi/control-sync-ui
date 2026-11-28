@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RelayCore,
+  type IncomingRequest,
+  type RelayOptions,
   type RelayServer,
   type RelayServerOptions,
+  type ServerResponseLike,
+  createRelayHandler,
   startRelayServer,
 } from "../src/index";
 
@@ -36,6 +40,7 @@ declare function fetch(
 ): Promise<TestResponse>;
 declare const AbortController: new () => TestAbortController;
 declare const TextDecoder: new () => { decode(input?: Uint8Array): string };
+declare const TextEncoder: new () => { encode(input?: string): Uint8Array };
 declare function setTimeout(callback: () => void, ms: number): unknown;
 
 const servers: RelayServer[] = [];
@@ -50,7 +55,7 @@ afterEach(async () => {
 });
 
 async function startTestServer(
-  options: { leaseTtlMs?: number; presenceTtlMs?: number; maxBodyBytes?: number } = {},
+  options: RelayOptions = {},
   serverOptions: RelayServerOptions = {},
 ): Promise<{ relay: RelayCore; server: RelayServer }> {
   const relay = new RelayCore(options);
@@ -427,5 +432,193 @@ describe("Relay HTTP / SSE サーバー（IF-001〜IF-006）", () => {
     );
     expect(wrongMethod.status).toBe(405);
     expect(wrongMethod.headers.get("Allow")).toContain("POST");
+  });
+
+  it("不正な requestId（改行・非ASCII）でもクラッシュせず 400 INVALID_MESSAGE を返す", async () => {
+    const { server } = await startTestServer();
+
+    const crlf = await fetch(
+      `${server.baseUrl}/rooms/room-a/notifications?targetId=t1&schemaVersion=1&requestId=bad%0d%0aid`,
+    );
+    expect(crlf.status).toBe(400);
+    expect(await crlf.json()).toMatchObject({
+      code: "INVALID_MESSAGE",
+      requestId: "",
+    });
+
+    const nonAscii = await fetch(
+      `${server.baseUrl}/rooms/room-a/notifications?targetId=t1&schemaVersion=1&requestId=${encodeURIComponent("日本語")}`,
+    );
+    expect(nonAscii.status).toBe(400);
+    expect(await nonAscii.json()).toMatchObject({
+      code: "INVALID_MESSAGE",
+      requestId: "",
+    });
+  });
+
+  it("SSE 接続が開いたままでも server.close() がハングせず終了し、corsOrigin: null で CORS ヘッダーを省く", async () => {
+    const { server } = await startTestServer({}, { corsOrigin: null });
+    const { res, sse, abort } = await openSse(server.baseUrl);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+
+    // 開いたまま close() を呼んでも即座に解決する。
+    await server.close();
+    await sse.close().catch(() => undefined);
+    abort();
+  });
+
+  it("チャンク境界で分断されたマルチバイト UTF-8 ボディ、途中切断、SSE 書き込み失敗を安全に処理する", async () => {
+    const relay = new RelayCore();
+    relay.createRoom("room-a");
+    const controller = createRelayHandler(relay);
+
+    function createMockReqRes(init: {
+      method: string;
+      url: string;
+      headers?: Record<string, string>;
+      throwOnWriteHead?: boolean;
+    }) {
+      const reqListeners = new Map<string, ((...args: unknown[]) => void)[]>();
+      const resListeners = new Map<string, ((...args: unknown[]) => void)[]>();
+      const responseHeaders = new Map<string, string>();
+      let endedBody = "";
+      let ended = false;
+
+      const req: IncomingRequest = {
+        method: init.method,
+        url: init.url,
+        headers: init.headers ?? {},
+        on: (event, listener) => {
+          const list = reqListeners.get(event) ?? [];
+          list.push(listener);
+          reqListeners.set(event, list);
+          return req;
+        },
+        removeListener: (event, listener) => {
+          const list = reqListeners.get(event);
+          if (list !== undefined) {
+            reqListeners.set(
+              event,
+              list.filter((l) => l !== listener),
+            );
+          }
+          return req;
+        },
+      };
+
+      const res: ServerResponseLike = {
+        statusCode: 200,
+        get writableEnded() {
+          return ended;
+        },
+        setHeader: (name, value) => {
+          responseHeaders.set(name.toLowerCase(), value);
+        },
+        writeHead: (status, headers) => {
+          if (init.throwOnWriteHead) {
+            throw new Error("writeHead failed");
+          }
+          res.statusCode = status;
+          if (headers !== undefined) {
+            for (const [k, v] of Object.entries(headers)) {
+              responseHeaders.set(k.toLowerCase(), v);
+            }
+          }
+        },
+        write: () => true,
+        end: (chunk) => {
+          if (chunk !== undefined) {
+            endedBody += chunk;
+          }
+          ended = true;
+        },
+        on: (event, listener) => {
+          const list = resListeners.get(event) ?? [];
+          list.push(listener);
+          resListeners.set(event, list);
+          return res;
+        },
+      };
+
+      const emitReq = (event: string, ...args: unknown[]) => {
+        for (const fn of [...(reqListeners.get(event) ?? [])]) {
+          fn(...args);
+        }
+      };
+      return {
+        req,
+        res,
+        emitReq,
+        getStatus: () => res.statusCode,
+        getHeader: (name: string) => responseHeaders.get(name.toLowerCase()),
+        getEndedBody: () => endedBody,
+      };
+    }
+
+    // 1. マルチバイト UTF-8 文字（日本語・絵文字）をバイト途中で2分割した Uint8Array チャンクで送信
+    const utf8 = createMockReqRes({
+      method: "POST",
+      url: "/rooms/room-a/events",
+      headers: {
+        "x-schema-version": "1",
+        "x-request-id": "utf8-1",
+      },
+    });
+    controller.handler(utf8.req, utf8.res);
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({
+        targetId: "t1",
+        controlSeq: 0,
+        events: [{ eventId: "e-jp", payload: { type: "日本語テスト🔥" } }],
+      }),
+    );
+    const splitAt = bytes.indexOf(0xf0) + 2; // 4バイト絵文字の途中で分割
+    utf8.emitReq("data", bytes.subarray(0, splitAt));
+    utf8.emitReq("data", bytes.subarray(splitAt));
+    utf8.emitReq("end");
+    await waitMs(10);
+    expect(utf8.getStatus()).toBe(200);
+    expect(utf8.getHeader("x-request-id")).toBe("utf8-1");
+    expect(JSON.parse(utf8.getEndedBody())).toEqual({
+      accepted: [{ eventId: "e-jp", eventSeq: 1 }],
+    });
+
+    // 2. POST ボディ途中でクライアントが切断（close）してもハングせず 400 で終了する
+    const aborted = createMockReqRes({
+      method: "POST",
+      url: "/rooms/room-a/presence",
+      headers: {
+        "x-schema-version": "1",
+        "x-request-id": "abort-1",
+      },
+    });
+    controller.handler(aborted.req, aborted.res);
+    aborted.emitReq("data", new TextEncoder().encode('{"targetId":'));
+    aborted.emitReq("close");
+    await waitMs(10);
+    expect(aborted.getStatus()).toBe(400);
+    expect(JSON.parse(aborted.getEndedBody())).toMatchObject({
+      code: "INVALID_MESSAGE",
+      requestId: "abort-1",
+    });
+
+    // 3. SSE writeHead 失敗時に activeStreams がリークしない
+    const internalErrors: unknown[] = [];
+    const sseController = createRelayHandler(relay, {
+      onInternalError: (e) => internalErrors.push(e),
+    });
+    const failedSse = createMockReqRes({
+      method: "GET",
+      url: "/rooms/room-a/notifications?targetId=t1&schemaVersion=1&requestId=sse-fail",
+      throwOnWriteHead: true,
+    });
+    sseController.handler(failedSse.req, failedSse.res);
+    await waitMs(10);
+    expect(sseController.activeStreamCount()).toBe(0);
+    expect(internalErrors).toHaveLength(1);
+
+    controller.close();
+    sseController.close();
   });
 });

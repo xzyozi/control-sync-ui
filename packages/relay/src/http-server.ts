@@ -47,10 +47,12 @@ export async function startRelayServer(
 
   await new Promise<void>((resolve, reject) => {
     const onError = (err: unknown) => {
+      server.removeListener?.("error", onError);
       reject(err instanceof Error ? err : new Error(String(err)));
     };
     server.on?.("error", onError);
     server.listen(port, host, () => {
+      server.removeListener?.("error", onError);
       controller.scheduleLeaseExpiry();
       resolve();
     });

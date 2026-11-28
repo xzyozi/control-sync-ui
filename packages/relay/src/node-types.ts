@@ -25,6 +25,7 @@ export interface HttpServerLike {
   close(callback: (err?: Error) => void): void;
   closeAllConnections?(): void;
   on?(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
 export type CreateServerFn = (
