@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    "paths": {
+      "@csu/core": ["../core/src/index.ts"],
+      "@csu/relay": ["../relay/src/index.ts"],
+      "@csu/storage-indexeddb": ["../storage-indexeddb/src/index.ts"],
+      "@csu/transport-http": ["../transport-http/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

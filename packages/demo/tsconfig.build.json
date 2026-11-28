@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "references": [
+    { "path": "../core/tsconfig.build.json" },
+    { "path": "../relay/tsconfig.build.json" },
+    { "path": "../storage-indexeddb/tsconfig.build.json" },
+    { "path": "../transport-http/tsconfig.build.json" }
+  ],
+  "include": ["src"]
+}
