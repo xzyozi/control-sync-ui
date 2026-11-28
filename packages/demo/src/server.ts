@@ -103,6 +103,7 @@ function writeText(
   res.statusCode = status;
   res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.end(body);
 }
 
