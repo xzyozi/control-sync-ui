@@ -1,16 +1,19 @@
-import { TransportError } from "@csu/core";
-import type {
-  AcceptedEvent,
-  ConnectionHandlers,
-  ControlSnapshot,
-  NotificationConnection,
-  ServerNotification,
-  StoredEvent,
-  TransportPort,
+import {
+  TransportError,
+  type AcceptedEvent,
+  type ConnectionHandlers,
+  type ControlSnapshot,
+  type NotificationConnection,
+  type SendFilter,
+  type ServerErrorCode,
+  type ServerNotification,
+  type StoredEvent,
+  type TransportErrorCode,
+  type TransportPort,
 } from "@csu/core";
 import {
-  type AbortControllerConstructor,
   EVENT_SOURCE_CLOSED,
+  type AbortControllerConstructor,
   type EventSourceConstructor,
   type FetchLike,
   type ResponseLike,
@@ -38,9 +41,110 @@ export interface HttpTransportOptions {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+const SERVER_ERROR_CODES = new Set<ServerErrorCode>([
+  "INVALID_MESSAGE",
+  "SCHEMA_VERSION_MISMATCH",
+  "LOCK_NOT_HELD",
+  "ROOM_NOT_FOUND",
+  "STALE_CONTROL_SEQ",
+  "LOCK_HELD_BY_OTHER",
+  "TARGET_OFFLINE",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function invalidResponse(
+  message = "invalid response from the server",
+): TransportError {
+  return new TransportError(message, "INVALID_RESPONSE");
+}
+
+function parseSendFilter(value: unknown): SendFilter | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const mode = value.mode;
+  if (mode !== "ALL" && mode !== "NONE" && mode !== "TYPES") {
+    return null;
+  }
+  if (value.types !== undefined && !isStringArray(value.types)) {
+    return null;
+  }
+  if (value.targetIds !== undefined && !isStringArray(value.targetIds)) {
+    return null;
+  }
+  return {
+    mode,
+    ...(value.types !== undefined ? { types: value.types } : {}),
+    ...(value.targetIds !== undefined ? { targetIds: value.targetIds } : {}),
+  };
+}
+
+function parseControlSnapshot(body: unknown): ControlSnapshot {
+  if (
+    !isRecord(body) ||
+    typeof body.controlSeq !== "number" ||
+    !Number.isInteger(body.controlSeq) ||
+    body.controlSeq < 0 ||
+    !isRecord(body.control)
+  ) {
+    throw invalidResponse();
+  }
+  const holderId = body.control.holderId;
+  if (holderId !== null && typeof holderId !== "string") {
+    throw invalidResponse();
+  }
+  const sendFilter = parseSendFilter(body.control.sendFilter);
+  if (sendFilter === null) {
+    throw invalidResponse();
+  }
+  return {
+    controlSeq: body.controlSeq,
+    control: {
+      sendFilter,
+      holderId,
+    },
+  };
+}
+
+function parseAcceptedEvents(body: unknown): readonly AcceptedEvent[] {
+  if (!isRecord(body) || !Array.isArray(body.accepted)) {
+    throw invalidResponse();
+  }
+  const accepted: AcceptedEvent[] = [];
+  for (const item of body.accepted) {
+    if (
+      !isRecord(item) ||
+      typeof item.eventId !== "string" ||
+      item.eventId.length === 0 ||
+      typeof item.eventSeq !== "number" ||
+      !Number.isInteger(item.eventSeq) ||
+      item.eventSeq < 1
+    ) {
+      throw invalidResponse();
+    }
+    accepted.push({
+      eventId: item.eventId,
+      eventSeq: item.eventSeq,
+    });
+  }
+  return accepted;
+}
+
+function isServerErrorCode(value: string): value is ServerErrorCode {
+  return SERVER_ERROR_CODES.has(value as ServerErrorCode);
+}
+
+type ParsedNotification =
+  | { readonly kind: "notification"; readonly notification: ServerNotification }
+  | { readonly kind: "mismatch" }
+  | { readonly kind: "invalid" };
 
 /**
  * TransportPort の HTTP と SSE の実装（BD C-010）。IF/API仕様書の契約に従う。
@@ -57,7 +161,8 @@ export class HttpTransport implements TransportPort {
   constructor(private readonly options: HttpTransportOptions) {
     this.base = options.baseUrl.replace(/\/+$/, "");
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.fetchFn = options.fetch ?? fetch;
+    // グローバルの fetch をメソッドとして呼ぶとブラウザで Illegal invocation になるため、束縛せず包む。
+    this.fetchFn = options.fetch ?? ((url, init) => fetch(url, init));
     this.eventSourceCtor = options.EventSource ?? EventSource;
     this.abortControllerCtor = options.AbortController ?? AbortController;
   }
@@ -74,14 +179,7 @@ export class HttpTransport implements TransportPort {
       { method: "GET" },
       args.requestId,
     );
-    if (
-      !isRecord(body) ||
-      typeof body.controlSeq !== "number" ||
-      !isRecord(body.control)
-    ) {
-      throw new TransportError("invalid response from the server", "INVALID_RESPONSE");
-    }
-    return body as unknown as ControlSnapshot;
+    return parseControlSnapshot(body);
   }
 
   /** IF-002: イベントの送信。 */
@@ -107,10 +205,7 @@ export class HttpTransport implements TransportPort {
       },
       args.requestId,
     );
-    if (!isRecord(body) || !Array.isArray(body.accepted)) {
-      throw new TransportError("invalid response from the server", "INVALID_RESPONSE");
-    }
-    return body.accepted as AcceptedEvent[];
+    return parseAcceptedEvents(body);
   }
 
   /** IF-004: presence heartbeat（応答の本文はない。204）。 */
@@ -143,9 +238,12 @@ export class HttpTransport implements TransportPort {
 
     source.onopen = () => handlers.onOpen();
     source.onmessage = (event) => {
-      const notification = this.parseNotification(event.data);
-      if (notification !== null) {
-        handlers.onNotification(notification);
+      const parsed = this.parseNotification(event.data);
+      if (parsed.kind === "notification") {
+        handlers.onNotification(parsed.notification);
+      } else if (parsed.kind === "mismatch") {
+        source.close();
+        handlers.onError({ closed: true, code: "SCHEMA_VERSION_MISMATCH" });
       }
     };
     source.onerror = () => {
@@ -161,31 +259,51 @@ export class HttpTransport implements TransportPort {
     return `${this.base}/rooms/${encodeURIComponent(roomId)}`;
   }
 
-  private parseNotification(data: string): ServerNotification | null {
+  private parseNotification(data: string): ParsedNotification {
     try {
       const parsed: unknown = JSON.parse(data);
+      if (!isRecord(parsed) || typeof parsed.schemaVersion !== "string") {
+        return { kind: "invalid" };
+      }
+      if (parsed.schemaVersion !== this.options.schemaVersion) {
+        return { kind: "mismatch" };
+      }
       if (
-        isRecord(parsed) &&
-        (parsed.type === "CONTROL_UPDATED" || parsed.type === "EVENTS_APPENDED") &&
-        typeof parsed.controlSeq === "number"
+        (parsed.type !== "CONTROL_UPDATED" && parsed.type !== "EVENTS_APPENDED") ||
+        typeof parsed.controlSeq !== "number" ||
+        !Number.isInteger(parsed.controlSeq) ||
+        parsed.controlSeq < 0
       ) {
-        return {
+        return { kind: "invalid" };
+      }
+      if (
+        parsed.eventSeq !== undefined &&
+        (typeof parsed.eventSeq !== "number" ||
+          !Number.isInteger(parsed.eventSeq) ||
+          parsed.eventSeq < 1)
+      ) {
+        return { kind: "invalid" };
+      }
+      return {
+        kind: "notification",
+        notification: {
           type: parsed.type,
           controlSeq: parsed.controlSeq,
           ...(typeof parsed.eventSeq === "number"
             ? { eventSeq: parsed.eventSeq }
             : {}),
-        };
-      }
+        },
+      };
     } catch {
       // 不正な通知は、無視する（接続は維持する）。
+      return { kind: "invalid" };
     }
-    return null;
   }
 
   /**
    * HTTP リクエストを実行する。成功の応答は、JSON（本文なしの場合は undefined）を返す。
-   * - 通信の失敗、タイムアウト、HTTP 5xx: `code` なしの TransportError（再試行できる）。
+   * - 通信の失敗、本文読み込みの失敗、タイムアウト、HTTP 5xx: `code` なしの TransportError（再試行できる）。
+   * - 2xx の不正な JSON: `INVALID_RESPONSE` の TransportError。
    * - 4xx: IF の共通エラー形式（`code`、`controlSeq`）を、TransportError にする。
    */
   private async request(
@@ -196,6 +314,7 @@ export class HttpTransport implements TransportPort {
     const controller = new this.abortControllerCtor();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: ResponseLike;
+    let text: string;
     try {
       response = await this.fetchFn(url, {
         method: init.method,
@@ -209,6 +328,8 @@ export class HttpTransport implements TransportPort {
         ...(init.body !== undefined ? { body: init.body } : {}),
         signal: controller.signal,
       });
+      // 本文の読み込みも、タイムアウト（V-05）および通信エラー分類の対象に含める。
+      text = await response.text();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "network failure";
       throw new TransportError(message);
@@ -216,9 +337,15 @@ export class HttpTransport implements TransportPort {
       clearTimeout(timer);
     }
 
-    const text = await response.text();
     if (response.ok) {
-      return text === "" ? undefined : (JSON.parse(text) as unknown);
+      if (text === "") {
+        return undefined;
+      }
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        throw invalidResponse("invalid JSON response from the server");
+      }
     }
     if (response.status >= 500) {
       throw new TransportError(`server error: HTTP ${response.status}`);
@@ -231,9 +358,12 @@ export class HttpTransport implements TransportPort {
     try {
       const body: unknown = JSON.parse(text);
       if (isRecord(body) && typeof body.code === "string") {
+        const code: TransportErrorCode = isServerErrorCode(body.code)
+          ? body.code
+          : `HTTP_${status}`;
         return new TransportError(
           typeof body.message === "string" ? body.message : body.code,
-          body.code,
+          code,
           typeof body.controlSeq === "number" ? body.controlSeq : undefined,
         );
       }

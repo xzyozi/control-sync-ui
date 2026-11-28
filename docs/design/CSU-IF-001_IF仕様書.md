@@ -5,7 +5,7 @@ document_number: "CSU-IF-001"
 document_role: "normative"
 ssot_scope: "external_interface"
 status: "draft"
-version: "1.5"
+version: "1.6"
 created_at: "2026-11-26"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -95,6 +95,8 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | `STALE_CONTROL_SEQ`       | 409             |
 | `LOCK_HELD_BY_OTHER`      | 409             |
 | `TARGET_OFFLINE`          | 409             |
+
+  ※ 上表はサーバーが返すエラーコードである。クライアント側の通信アダプター（`transport-http`）が 2xx の不正応答や非 JSON の 4xx 応答を検出した場合は、アダプター固有のエラーコード（`INVALID_RESPONSE`、`HTTP_<status>`）として扱う（[DD §4.1](./CSU-DD-001_詳細設計書.md)）。
 
 - **成功時の HTTP ステータス**: 本文を返す場合は 200、本文を返さない場合（IF-004）は 204、IF-003 の接続の確立は 200（`text/event-stream`）とする。
 - **タイムアウト・再試行**: 具体値は DD で定める。再試行してよいかは、各 IF の冪等性と、エラー応答の再試行可否の列に従う。
@@ -385,3 +387,4 @@ IF-005 の更新が lease heartbeat に当たる。IF-004（presence heartbeat�
 | Rev.1.3 | 2026-11-28 | xzyozi | DD（CSU-DD-001）、DS（CSU-DS-001）の作成に伴い、IF と DD の機能 ID の対応を追加。DD で確定した値（TTL、再試行、`requestId` の保持期間）は DD を正本とする。拒否されたイベントの再評価と `eventSeq` の範囲を、DD で確定済みとして更新。「再試行可否」の列の意味（手動の再実行の可否。自動再試行は DD）を明記。                                                                                                                                                                                                   |
 | Rev.1.4 | 2026-11-28 | xzyozi | 機能テスト要件（TR-001〜TR-013）の「対応テストケース」に、テスト計画・結果報告書（CSU-TEST-001）のケース ID（TC-001〜TC-013）を記入。                                                                                                                                                                                                                                                                                                                                                                           |
 | Rev.1.5 | 2026-11-28 | xzyozi | IF-002 の冪等性の単位を `(targetId, eventId)` の組に変更。IF-006 の冪等性は、成功した応答だけを保持し、クライアントが IF-006 を同時に1件だけ再試行する前提を明記（DD F-005 と対応）。                                                                                                                                                                                                                                                                                                                           |
+| Rev.1.6 | 2026-11-28 | xzyozi | レビュー指摘（#25）を反映し、§2.2 にクライアント側の通信アダプター固有のエラーコード（`INVALID_RESPONSE`、`HTTP_<status>`）がサーバー契約とは別分類である旨を注記。 |
