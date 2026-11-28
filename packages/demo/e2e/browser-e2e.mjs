@@ -65,7 +65,7 @@ function attachErrorCollector(page, name, errors, shouldIgnore = () => false) {
         locUrl.includes("/rooms/") &&
         (text.includes("status of 403") || text.includes("status of 409"));
       if (!isExpectedRelay4xx) {
-        errors.push(`[${name}] console.error: ${text}`);
+        errors.push(`[${name}] console.error (${locUrl}): ${text}`);
       }
     }
   });

@@ -323,6 +323,10 @@ export async function startDemoServer(
     const method = (req.method ?? "GET").toUpperCase();
     const { pathname, query } = parseQuery(req.url ?? "/");
 
+    if (method === "GET" && pathname === "/favicon.ico") {
+      writeText(res, 204, "image/x-icon", "");
+      return;
+    }
     if (method === "GET" && pathname === "/") {
       writeText(res, 200, "text/html; charset=utf-8", renderIndexHtml());
       return;
