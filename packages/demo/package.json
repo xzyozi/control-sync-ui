@@ -1,0 +1,21 @@
+{
+  "name": "@csu/demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "2画面（対象端末・外部PC）動作確認用デモと結合・E2Eテスト",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --import ./e2e/register-esm.mjs dist/cli.js"
+  },
+  "dependencies": {
+    "@csu/core": "*",
+    "@csu/relay": "*",
+    "@csu/storage-indexeddb": "*",
+    "@csu/transport-http": "*"
+  }
+}
