@@ -15,6 +15,7 @@ import {
   EVENT_SOURCE_CLOSED,
   type AbortControllerConstructor,
   type EventSourceConstructor,
+  type EventSourceLike,
   type FetchLike,
   type ResponseLike,
 } from "./web-types.js";

@@ -79,12 +79,15 @@ export interface RelayAuthzContext {
   readonly action?: LeaseAction | undefined;
 }
 
-export type RelayAuthorizer = (context: RelayAuthzContext) => boolean | void;
+export type RelayAuthorizer = (context: RelayAuthzContext) => boolean;
 
-export type InvariantValidationResult =
-  | void
+export type InvariantDecision =
   | { readonly valid: true }
   | { readonly valid: false; readonly message: string };
+
+export type RelayInvariantHook<T> =
+  | ((context: T) => InvariantDecision | undefined)
+  | ((context: T) => void);
 
 export interface IncomingEventRecord {
   readonly eventId: string;
@@ -152,17 +155,11 @@ export interface RelayOptions {
   /** 認可フック（#8）。false を返すか RelayError を投げると拒否される。 */
   readonly authorize?: RelayAuthorizer;
   /** IF-002 のビジネスルール／不変条件検証フック（#8）。 */
-  readonly onValidatePushEvents?: (
-    context: PushEventsValidationContext,
-  ) => InvariantValidationResult;
+  readonly onValidatePushEvents?: RelayInvariantHook<PushEventsValidationContext>;
   /** IF-006 のビジネスルール／不変条件検証フック（#8）。 */
-  readonly onValidateChangeControl?: (
-    context: ChangeControlValidationContext,
-  ) => InvariantValidationResult;
+  readonly onValidateChangeControl?: RelayInvariantHook<ChangeControlValidationContext>;
   /** IF-005 のビジネスルール／不変条件検証フック（#8）。 */
-  readonly onValidateLease?: (
-    context: LeaseValidationContext,
-  ) => InvariantValidationResult;
+  readonly onValidateLease?: RelayInvariantHook<LeaseValidationContext>;
   /** 監査イベントの通知先（#8）。秘密情報・payload は含めない。 */
   readonly onAudit?: (event: RelayAuditEvent) => void;
 }

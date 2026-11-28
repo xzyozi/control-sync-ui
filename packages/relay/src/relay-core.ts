@@ -8,7 +8,6 @@ import type {
   CreateRoomOptions,
   Envelope,
   IncomingEventRecord,
-  InvariantValidationResult,
   LeaseAction,
   LeaseResult,
   LeaseValidationContext,
@@ -18,6 +17,7 @@ import type {
   PushEventsValidationContext,
   RelayAuditEvent,
   RelayAuthorizer,
+  RelayInvariantHook,
   RelayOperation,
   RelayOptions,
   RelayPrincipal,
@@ -80,13 +80,13 @@ export class RelayCore {
   private readonly requireTenant: boolean;
   private readonly authorize: RelayAuthorizer | undefined;
   private readonly onValidatePushEvents:
-    | ((context: PushEventsValidationContext) => InvariantValidationResult)
+    | RelayInvariantHook<PushEventsValidationContext>
     | undefined;
   private readonly onValidateChangeControl:
-    | ((context: ChangeControlValidationContext) => InvariantValidationResult)
+    | RelayInvariantHook<ChangeControlValidationContext>
     | undefined;
   private readonly onValidateLease:
-    | ((context: LeaseValidationContext) => InvariantValidationResult)
+    | RelayInvariantHook<LeaseValidationContext>
     | undefined;
   private readonly onAudit: ((event: RelayAuditEvent) => void) | undefined;
 
@@ -631,13 +631,13 @@ export class RelayCore {
   }
 
   private runInvariant<T>(
-    hook: ((context: T) => InvariantValidationResult) | undefined,
+    hook: RelayInvariantHook<T> | undefined,
     context: T,
   ): void {
     if (hook === undefined) {
       return;
     }
-    let result: InvariantValidationResult;
+    let result: unknown;
     try {
       result = hook(context);
     } catch (error) {
@@ -651,10 +651,9 @@ export class RelayCore {
       throw new RelayError("INVARIANT_VIOLATION", message);
     }
     if (
-      result !== undefined &&
-      typeof result === "object" &&
-      result !== null &&
-      result.valid === false
+      isRecord(result) &&
+      result.valid === false &&
+      typeof result.message === "string"
     ) {
       throw new RelayError("INVARIANT_VIOLATION", result.message);
     }
