@@ -5,7 +5,7 @@ document_number: "CSU-DD-001"
 document_role: "normative"
 ssot_scope: "module_behavior"
 status: "draft"
-version: "1.3"
+version: "1.4"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -107,9 +107,9 @@ related_documents:
 
 #### 機能契約（機能ID: F-004）
 
-- **対象機能・関数名**: 接続（`connect`）、切断（`disconnect`）。
-- **機能概要**: Control-First Sync の手順を制御する。更新通知の接続（IF-003）が開くたびに、IF-001 で制御状態を取得し、F-002 に反映し、その後に F-003 の評価と IF-002 の送信を行う。接続中は、presence heartbeat（IF-004）を V-04 の間隔で送る。接続中に `CONTROL_UPDATED` を受けたとき、または IF-002 が `STALE_CONTROL_SEQ` で拒否されたときは、IF-001 で制御状態を取得し直し、F-003 で再評価してから、IF-002 を再実行する（3.2）。
-- **事前条件**: `roomId`、`targetId`、`schemaVersion` が設定されていること。
+- **対象機能・関数名**: 接続（`connect`）、切断（`disconnect`）、ローカルイベント通知（`notifyLocalEvents`）。
+- **機能概要**: Control-First Sync の手順を制御する。更新通知の接続（IF-003）が開くたびに、IF-001 で制御状態を取得し、F-002 に反映し、その後に F-003 の評価と IF-002 の送信を行う。接続中は、presence heartbeat（IF-004）を V-04 の間隔で送る。接続中に `CONTROL_UPDATED` を受けたとき、`Ready` 中に `notifyLocalEvents` を受けたとき、または IF-002 が `STALE_CONTROL_SEQ` で拒否されたときは、IF-001 で制御状態を取得し直し、F-003 で再評価してから、IF-002 を再実行する（3.2）。
+- **事前条件**: `roomId`、`targetId` が設定されていること。`schemaVersion` の付与と検証は `TransportPort` の実装（`transport-http` 等）が担い、Sync Engine は `TransportPort` から通知される `SCHEMA_VERSION_MISMATCH` を受けて停止する。
 - **事後条件**: `connect` の成功時は、Control Store が最新の `controlSeq` を持つ。`disconnect` は、heartbeat を止め、接続を閉じる。
 - **タイムアウト / キャンセル**: HTTP は V-05。`disconnect` で、進行中の再試行をキャンセルする。
 - **ログ・メトリクス・相関ID**: `requestId` を、リクエストごとに生成する（IF-003 は接続単位）。再試行では、同じ `requestId` を使う。
@@ -169,7 +169,7 @@ related_documents:
 | :------------------------ | :------- | :----: | :----: | :----------- | :----------------------------- | :------- |
 | `roomId`                  | 文字列   |  必須  |  不可  | なし         | 空でない。                     |          |
 | `targetId`                | 文字列   |  必須  |  不可  | なし         | 空でない。Room 内で一意。      |          |
-| `schemaVersion`           | 文字列   |  必須  |  不可  | `"1"`        | v0.1 の値は `"1"`。            |          |
+| `schemaVersion`           | 文字列   |  必須  |  不可  | `"1"`        | v0.1 の値は `"1"`（`TransportPort` 実装側で保持し、Sync Engine には渡さない）。 |          |
 
 ### 2.4 出力 DTO スキーマ・戻り値仕様
 
@@ -254,9 +254,9 @@ sequenceDiagram
 #### Sync Engine（F-004）
 
 - **初期状態**: `Disconnected`。
-- **終端状態**: `Stopped`（`SCHEMA_VERSION_MISMATCH`、再試行の上限）、`Disconnected`（`disconnect`）。
+- **終端状態**: `Stopped`（理由: `SCHEMA_VERSION_MISMATCH`、`RETRY_LIMIT`、`INVALID_REQUEST`、`UNEXPECTED`）、`Disconnected`（`disconnect`）。
 - **状態不変条件**: `Ready` のとき、Control Store の `controlSeq` は、直近の IF-001 の応答以降の値である。`Pulling` が完了するまで、IF-002 は実行しない。
-- **未定義イベントの扱い**: 状態に対して定義されていないイベントは、無視して記録する。
+- **未定義イベントの扱い**: 状態に対して定義されていないイベントは、無視して記録する（`onIgnoredEvent` 等）。
 
 | 現在の状態   | 実行結果 / 評価フラグ            | 次の状態     | 遷移判定条件・閾値ルール                                                     | 副作用・ログ / メトリクス                                                                                                                                                                                                                                |
 | :----------- | :------------------------------- | :----------- | :--------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -271,6 +271,7 @@ sequenceDiagram
 | Retrying     | 待ち時間の経過                   | Connecting   | 失敗の回数が V-06 以下。待ち時間は V-07。                                    | 待ち時間を記録する。                                                                                                                                                                                                                                     |
 | Retrying     | 再試行の上限                     | Stopped      | 失敗の回数が V-06 を超えた。                                                 | 親へエラーを通知する。保存済みのイベントは保持する。                                                                                                                                                                                                     |
 | Ready        | `CONTROL_UPDATED` の通知         | Pulling      | IF-003 の通知を受けた。                                                      | IF-001 で取得して F-002 に反映し、F-003 で未送信イベントを再評価する。                                                                                                                                                                                   |
+| Ready        | `notifyLocalEvents`              | Pulling      | 保存済みのイベントが増え、呼び出し元から通知された。                         | IF-001 で取得して F-002 に反映し、F-003 で再評価して送信する。                                                                                                                                                                                           |
 | Ready        | `STALE_CONTROL_SEQ`              | Pulling      | IF-002 が拒否された。連続回数が V-11 以下。                                  | 連続回数を 1 増やす。イベントは破棄しない。IF-001 で取得し直し、F-003 で再評価する。                                                                                                                                                                     |
 | Ready        | `STALE_CONTROL_SEQ`              | Retrying     | 連続回数が V-11 を超えた。                                                   | 通信エラー1回として、失敗の回数に加える。待ち時間は V-07。Retrying の後は Connecting から再開するため、問題のない SSE の接続も張り直す。これは意図した動きで、競合が続くときは接続の状態に不整合があると見なし、手順を最初（接続、IF-001）からやり直す。 |
 | Ready        | Push の受理、または送信対象が0件 | Ready        | IF-002 が成功した。または、評価の結果、送信するイベントがない。              | 連続回数と失敗の回数を 0 に戻す。                                                                                                                                                                                                                        |
@@ -310,11 +311,12 @@ sequenceDiagram
 | 通信エラー、タイムアウト              | 一時的な障害           | 接続の失敗、V-05 の超過、HTTP 5xx。               |     V-06     | 同じ `requestId`、`eventId` で再試行する（冪等）。                            | Retrying → Stopped     | 上限に達したら、親に通知する。                                     | ローカルのイベントは保持する。                             |
 | `STALE_CONTROL_SEQ`                   | 状態の競合             | IF-002 の `controlSeq` が古い。                   | V-11（連続） | IF-001 で取得し直し、再評価してから再送する。                                 | Ready（再評価後）      | 通常の動作。運用者の対応は不要。                                   | イベントは破棄しない（3.2 のイベントの再評価）。           |
 | `SCHEMA_VERSION_MISMATCH`             | 互換性                 | `schemaVersion` が一致しない。                    |      0       | 再試行しない。                                                                | Stopped                | 親プロジェクトとサーバーの版を合わせる。                           | 状態を変えず、永続状態を変更しない。エラーを親へ通知する。 |
-| `INVALID_MESSAGE`                     | 呼び出しの誤り         | 共通項目の欠落、型の誤り、大きい `controlSeq`。   |      0       | 再試行しない。                                                                | Stopped（Sync Engine） | 実装の誤りとして修正する。                                         | 状態を変更しない。                                         |
+| `INVALID_MESSAGE`                     | 呼び出しの誤り         | 共通項目の欠落、型の誤り、大きい `controlSeq`。   |      0       | 再試行しない。                                                                | Stopped（`INVALID_REQUEST`） | 実装の誤りとして修正する。                                         | 状態を変更しない。                                         |
+| `INVALID_RESPONSE`、`HTTP_<status>`   | 通信境界の不正応答     | 2xx の不正 JSON/スキーマ不一致、または非 JSON の 4xx 応答。 |      0       | 再試行しない。                                                      | Stopped（`INVALID_REQUEST`） | サーバーの契約違反や接続先 URL を確認する。                        | 状態を変更しない。                                         |
 | `ROOM_NOT_FOUND`                      | 設定の誤り、状態の消失 | `roomId` が存在しない（サーバーの再起動を含む）。 |      0       | 再試行しない。                                                                | Stopped                | `roomId` を確認する。サーバーが再起動した場合は、Room を作り直す。 | ローカルのイベントは保持する。                             |
 | `LOCK_NOT_HELD`、`LOCK_HELD_BY_OTHER` | lease の競合           | IF-005、IF-006 の拒否。                           |      0       | `LOCK_HELD_BY_OTHER` は、保持者の解放または TTL の切れの後に ACQUIRE し直す。 | （外部PC側の処理）     | 外部PCの操作者に、保持者がいることを通知する。                     | 制御状態は変更しない。                                     |
 | `TARGET_OFFLINE`                      | 対象端末の状態         | `targetId` の端末がオフライン。                   |      0       | 端末がオンラインになってから、利用者が再実行する。                            | （外部PC側の処理）     | 外部PCの操作者に、端末がオフラインであることを通知する。           | 変更は適用しない。要求は滞留させない。                     |
-| 永続化エラー（`StoragePort`）         | ローカルの障害         | イベントの追記に失敗した。                        |      0       | 再試行しない（呼び出し元が判断する）。                                        | 呼び出し元へエラー     | 容量不足、権限、ブラウザの制限を確認する。                         | 状態を更新しない。イベントは追記されない。                 |
+| 永続化エラー（`StoragePort` 等）      | ローカルの障害         | イベントの追記や読み出しに失敗した。              |      0       | 再試行しない（呼び出し元が判断する）。                                        | Stopped（`UNEXPECTED`）／呼び出し元へエラー | 容量不足、権限、ブラウザの制限を確認する。                         | 状態を更新しない。イベントは追記されない。                 |
 
 - **再試行の列の意味**: 本表の「再試行上限」は、クライアントが**自動で**再試行する回数である。IF/API仕様書の「再試行可否」は、呼び出し側が、条件の解消後に**手動または別の操作で再実行してよいか**を表す。たとえば、`TARGET_OFFLINE` と `LOCK_HELD_BY_OTHER` は、IF では「条件付き」（端末がオンラインになった後、または保持者が解放した後に再実行してよい）で、本表では自動再試行が 0 回である。
 
@@ -384,3 +386,4 @@ sequenceDiagram
 | Rev.1.1 | 2026-11-28 | xzyozi | 機能テスト要件（TR-101〜TR-120）の「対応テストケース」に、テスト計画・結果報告書（CSU-TEST-001）のケース ID（TC-101〜TC-120）を記入。                                                                                                                                                                                                                                                                                                                                   |
 | Rev.1.2 | 2026-11-28 | xzyozi | 実装（`core`）に合わせた更新。F-001: 二重追記は追記済みとして扱い（状態を更新せず、現在の状態を返す）、`createdAt` の既定値を追記時の時刻とすることを明記（DS §3.2、DD §2.3 に合わせた）。F-002: `controlSeq` は 0 以上の整数とし、NaN などは `RangeError` とする前提を追加（NaN を受け入れると古い応答も反映されるため）。F-003: Outbox は `StoragePort` から未送信のイベントを直接読むため、非同期で、呼び出し先を `StoragePort` と F-002 に変更（BD C-003 も同様）。 |
 | Rev.1.3 | 2026-11-28 | xzyozi | `relay` の実装に合わせた更新。F-005: `eventId` の重複判定を `(targetId, eventId)` の組に変更（`eventId` は端末内で一意）。IF-006 の応答は成功した場合だけ保持し、クライアントは IF-006 を同時に1件だけ再試行する前提を明記。通知の listener の失敗は、呼び出し元に返さない。既知の制限（`events` は #6 まで削除しない、Room の削除は提供しない）を追記。                                                                                                                |
+| Rev.1.4 | 2026-11-28 | xzyozi | `SyncEngine` と `transport-http` のレビュー指摘（#24、#25）を反映。F-004: `schemaVersion` は `TransportPort` 実装側で保持する構成に合わせ、`notifyLocalEvents` と `Stopped` の理由（`UNEXPECTED` 等）を追記。§4.1 にクライアント側 `TransportErrorCode`（`INVALID_RESPONSE`、`HTTP_<status>`）を追記。                                                                                                                                                              |

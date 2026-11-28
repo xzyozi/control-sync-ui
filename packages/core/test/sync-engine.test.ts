@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TransportError } from "../src/index";
 import {
   addPending,
@@ -112,18 +112,41 @@ describe("SyncEngine: Control-First Sync", () => {
 });
 
 describe("SyncEngine: STALE_CONTROL_SEQ", () => {
-  it("TC-106: 拒否されたイベントは破棄されず、IF-001 で取得し直した後に、再評価されて送られる", async () => {
+  it("TC-106: 拒否されたイベントは破棄されず、IF-001 で取得し直した後に新しいフィルタで再評価される", async () => {
     const f = createEngine();
-    f.transport.snapshot = ALL_CONTROL;
-    await addPending(f.storage, "e1");
+    await addPending(f.storage, "e1", "temperature");
+    // 初回は ALL(seq=1) で送信するが STALE_CONTROL_SEQ(2) で拒否され、
+    // 再取得した TYPES(humidity, seq=2) には合わないため送信されない。
+    f.transport.fetchSnapshots = [
+      ALL_CONTROL,
+      {
+        controlSeq: 2,
+        control: { sendFilter: { mode: "TYPES", types: ["humidity"] }, holderId: null },
+      },
+    ];
     f.transport.pushErrors = [stale(2)];
 
     await openConnection(f);
 
-    // 1回目の push は拒否され、IF-001 の取得し直しの後に、2回目が成功する。
     const calls = f.transport.calls.filter((c) => c !== "presence" && c !== "connect");
-    expect(calls).toEqual(["fetch", "push", "fetch", "push"]);
-    expect(f.transport.pushed).toEqual([{ controlSeq: 1, eventIds: ["e1"] }]);
+    expect(calls).toEqual(["fetch", "push", "fetch"]);
+    expect(f.transport.pushed).toEqual([]);
+    expect(f.control.getControlSeq()).toBe(2);
+    // イベントは破棄されず、未送信のまま残る。
+    expect(await f.storage.readPending("room-a")).toHaveLength(1);
+
+    // その後、対象を含むフィルタ（TYPES: temperature, seq=3）に変わると送信される。
+    f.transport.snapshot = {
+      controlSeq: 3,
+      control: { sendFilter: { mode: "TYPES", types: ["temperature"] }, holderId: null },
+    };
+    f.transport.handlers?.onNotification({
+      type: "CONTROL_UPDATED",
+      controlSeq: 3,
+    });
+    await flush();
+
+    expect(f.transport.pushed).toEqual([{ controlSeq: 3, eventIds: ["e1"] }]);
     expect(await f.storage.readPending("room-a")).toHaveLength(0);
   });
 
@@ -141,24 +164,47 @@ describe("SyncEngine: STALE_CONTROL_SEQ", () => {
     expect(f.transport.connections).toBe(1);
   });
 
-  it("TC-120: 連続が上限（3回）を超えると、通信エラー1回として数え、接続を張り直す", async () => {
+  it("TC-120: 連続が上限（3回）を超えると通信エラー1回として数え、再試行の上限（V-06）で Stopped になる", async () => {
     const f = createEngine();
     f.transport.snapshot = ALL_CONTROL;
     await addPending(f.storage, "e1");
-    // 4回続けて拒否される（上限 3 回を超える）。
-    f.transport.pushErrors = [stale(1), stale(1), stale(1), stale(1)];
+    // 初回接続で V-11（3回）を超える 4 回目で Retrying（失敗1回目）へ移る。
+    // その後も STALE_CONTROL_SEQ が続くと、V-06（3回の再試行）の上限で Stopped になる。
+    f.transport.pushErrors = [
+      stale(1),
+      stale(1),
+      stale(1),
+      stale(1),
+      stale(1),
+      stale(1),
+      stale(1),
+    ];
 
     await openConnection(f);
     expect(f.engine.state).toBe("Retrying");
     expect(f.transport.closedConnections).toBe(1);
 
-    // 待ち時間（1秒）の後に、Connecting から再開する（接続を張り直す）。
+    // 1回目（1秒後）
     f.scheduler.advance(1_000);
     expect(f.transport.connections).toBe(2);
     f.transport.handlers?.onOpen();
     await flush();
-    expect(f.engine.state).toBe("Ready");
-    expect(f.transport.pushed).toEqual([{ controlSeq: 1, eventIds: ["e1"] }]);
+    expect(f.engine.state).toBe("Retrying");
+
+    // 2回目（2秒後）
+    f.scheduler.advance(2_000);
+    expect(f.transport.connections).toBe(3);
+    f.transport.handlers?.onOpen();
+    await flush();
+    expect(f.engine.state).toBe("Retrying");
+
+    // 3回目（4秒後）→ 上限超過で Stopped
+    f.scheduler.advance(4_000);
+    expect(f.transport.connections).toBe(4);
+    f.transport.handlers?.onOpen();
+    await flush();
+    expect(f.engine.state).toBe("Stopped");
+    expect(f.stops).toEqual([{ reason: "RETRY_LIMIT", error: undefined }]);
   });
 });
 
@@ -212,22 +258,59 @@ describe("SyncEngine: 再試行と停止", () => {
     expect(high.transport.connections).toBe(1);
     high.scheduler.advance(1);
     expect(high.transport.connections).toBe(2);
+
+    // random を省略した既定値では Math.random が使われる（揺らぎが 0 固定でない）。
+    const spy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const def = createEngine({ random: undefined });
+      def.transport.fetchErrors = [network()];
+      await openConnection(def);
+      def.scheduler.advance(799);
+      expect(def.transport.connections).toBe(1);
+      def.scheduler.advance(1);
+      expect(def.transport.connections).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
-  it("再試行では、同じ手順を最初からやり直し、新しい requestId を使う（要求ごとに生成）", async () => {
+  it("TC-107: 通信エラーの後は、同じ手順をやり直しつつ失敗したリクエストと同じ requestId で再試行する", async () => {
     const f = createEngine();
+    f.transport.snapshot = ALL_CONTROL;
+    await addPending(f.storage, "e1");
     f.transport.fetchErrors = [network()];
     await openConnection(f);
     f.scheduler.advance(1_000);
     f.transport.handlers?.onOpen();
     await flush();
 
-    const ids = f.transport.requestIds;
-    expect(new Set(ids).size).toBe(ids.length);
+    const fetchIds = f.transport.callLogs
+      .filter((c) => c.op === "fetch")
+      .map((c) => c.requestId);
+    expect(fetchIds).toHaveLength(2);
+    expect(fetchIds[0]).toBe(fetchIds[1]);
+
+    // pushEvents の通信エラーも、同じ requestId で再試行される。
+    await addPending(f.storage, "e2");
+    f.transport.pushErrors = [network()];
+    f.engine.notifyLocalEvents();
+    await flush();
+    expect(f.engine.state).toBe("Retrying");
+
+    f.scheduler.advance(1_000);
+    f.transport.handlers?.onOpen();
+    await flush();
+
+    const pushIds = f.transport.callLogs
+      .filter((c) => c.op === "push")
+      .map((c) => c.requestId);
+    expect(pushIds).toHaveLength(3);
+    expect(pushIds[1]).toBe(pushIds[2]);
   });
 
-  it("TC-108: SCHEMA_VERSION_MISMATCH を受けると、再試行せずに Stopped になる", async () => {
+  it("TC-108: SCHEMA_VERSION_MISMATCH を受けると、再試行せずに Stopped になり、永続状態は変化しない", async () => {
     const f = createEngine();
+    await addPending(f.storage, "e1");
     f.transport.fetchErrors = [
       new TransportError("mismatch", "SCHEMA_VERSION_MISMATCH"),
     ];
@@ -237,6 +320,9 @@ describe("SyncEngine: 再試行と停止", () => {
     expect(f.stops).toEqual([
       { reason: "SCHEMA_VERSION_MISMATCH", error: undefined },
     ]);
+    // 永続状態・制御状態は変化しない。
+    expect(await f.storage.readPending("room-a")).toHaveLength(1);
+    expect(f.control.getControlSeq()).toBe(0);
     // 再試行のタイマーも、残らない。
     f.scheduler.advance(60_000);
     expect(f.transport.connections).toBe(1);
@@ -351,6 +437,71 @@ describe("SyncEngine: 切断と接続の状態", () => {
     );
     expect(f.engine.state).toBe("Stopped");
     expect(f.stops[0]?.reason).toBe("INVALID_REQUEST");
+  });
+
+  it("接続が CLOSED でも IF-001 が成功すれば、Retrying へ移って SSE を張り直す", async () => {
+    const f = createEngine();
+    await openConnection(f);
+
+    f.transport.handlers?.onError({ closed: true });
+    await flush();
+
+    expect(f.engine.state).toBe("Retrying");
+    f.scheduler.advance(1_000);
+    expect(f.transport.connections).toBe(2);
+    f.transport.handlers?.onOpen();
+    await flush();
+    expect(f.engine.state).toBe("Ready");
+  });
+
+  it("通知エラーで SCHEMA_VERSION_MISMATCH を受けたら、IF-001 を呼ばずに Stopped になる", async () => {
+    const f = createEngine();
+    await openConnection(f);
+    const before = f.transport.calls.filter((c) => c === "fetch").length;
+
+    f.transport.handlers?.onError({
+      closed: true,
+      code: "SCHEMA_VERSION_MISMATCH",
+    });
+    await flush();
+
+    expect(f.transport.calls.filter((c) => c === "fetch").length).toBe(before);
+    expect(f.engine.state).toBe("Stopped");
+    expect(f.stops).toEqual([
+      { reason: "SCHEMA_VERSION_MISMATCH", error: undefined },
+    ]);
+  });
+
+  it("Pulling 中の CONTROL_UPDATED など未定義イベントは無視して記録する", async () => {
+    const f = createEngine();
+    f.engine.connect();
+    f.transport.handlers?.onOpen();
+    // まだ fetchControl が解決していない Pulling 状態。
+    expect(f.engine.state).toBe("Pulling");
+    f.transport.handlers?.onNotification({
+      type: "CONTROL_UPDATED",
+      controlSeq: 9,
+    });
+    await flush();
+
+    expect(f.ignored).toEqual([{ state: "Pulling", event: "CONTROL_UPDATED" }]);
+  });
+
+  it("onStateChange が例外を投げても未処理の拒否にならず、同期処理を継続できる", async () => {
+    const callbackErrors: unknown[] = [];
+    const f = createEngine({
+      onStateChange: (state) => {
+        if (state === "Ready") {
+          throw new Error("ui error");
+        }
+      },
+      onCallbackError: (err) => callbackErrors.push(err),
+    });
+    await openConnection(f);
+
+    expect(f.engine.state).toBe("Ready");
+    expect(callbackErrors).toHaveLength(1);
+    expect((callbackErrors[0] as Error).message).toBe("ui error");
   });
 
   it("接続の切断（自動再接続あり）では、再試行の待ち時間の後に、接続を張り直す", async () => {

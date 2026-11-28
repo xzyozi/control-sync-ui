@@ -2,19 +2,18 @@ import {
   ControlStore,
   InMemoryStoragePort,
   SyncEngine,
+  type AcceptedEvent,
+  type ConnectionHandlers,
+  type ControlSnapshot,
+  type IgnoredEventInfo,
+  type NotificationConnection,
+  type Scheduler,
+  type StopReason,
+  type StoredEvent,
+  type SyncEngineOptions,
+  type SyncState,
   type TransportError,
-} from "../src/index";
-import type {
-  AcceptedEvent,
-  ConnectionHandlers,
-  ControlSnapshot,
-  NotificationConnection,
-  Scheduler,
-  StopReason,
-  StoredEvent,
-  SyncEngineOptions,
-  SyncState,
-  TransportPort,
+  type TransportPort,
 } from "../src/index";
 import { makeEvent } from "./helpers";
 
@@ -88,6 +87,7 @@ export class ManualScheduler implements Scheduler {
 export class FakeTransport implements TransportPort {
   readonly calls: string[] = [];
   readonly requestIds: string[] = [];
+  readonly callLogs: { op: string; requestId: string }[] = [];
   readonly pushed: { controlSeq: number; eventIds: string[] }[] = [];
   connections = 0;
   closedConnections = 0;
@@ -98,17 +98,20 @@ export class FakeTransport implements TransportPort {
   };
   /** 次の呼び出しで投げるエラー（先頭から1件ずつ消費する）。 */
   fetchErrors: (TransportError | null)[] = [];
+  /** 呼び出しごとに差し替える snapshot（先頭から1件ずつ消費する）。 */
+  fetchSnapshots: ControlSnapshot[] = [];
   pushErrors: (TransportError | null)[] = [];
   presenceError: TransportError | null = null;
 
   async fetchControl(args: { requestId: string }): Promise<ControlSnapshot> {
     this.calls.push("fetch");
     this.requestIds.push(args.requestId);
+    this.callLogs.push({ op: "fetch", requestId: args.requestId });
     const error = this.fetchErrors.shift();
     if (error) {
       throw error;
     }
-    return this.snapshot;
+    return this.fetchSnapshots.shift() ?? this.snapshot;
   }
 
   async pushEvents(args: {
@@ -118,6 +121,7 @@ export class FakeTransport implements TransportPort {
   }): Promise<readonly AcceptedEvent[]> {
     this.calls.push("push");
     this.requestIds.push(args.requestId);
+    this.callLogs.push({ op: "push", requestId: args.requestId });
     const error = this.pushErrors.shift();
     if (error) {
       throw error;
@@ -135,16 +139,19 @@ export class FakeTransport implements TransportPort {
   async sendPresence(args: { requestId: string }): Promise<void> {
     this.calls.push("presence");
     this.requestIds.push(args.requestId);
+    this.callLogs.push({ op: "presence", requestId: args.requestId });
     if (this.presenceError) {
       throw this.presenceError;
     }
   }
 
   connect(
-    _args: { requestId: string },
+    args: { requestId: string },
     handlers: ConnectionHandlers,
   ): NotificationConnection {
     this.calls.push("connect");
+    this.requestIds.push(args.requestId);
+    this.callLogs.push({ op: "connect", requestId: args.requestId });
     this.connections += 1;
     this.handlers = handlers;
     return {
@@ -163,6 +170,7 @@ export interface EngineFixture {
   control: ControlStore;
   states: SyncState[];
   stops: { reason: StopReason; error?: unknown }[];
+  ignored: IgnoredEventInfo[];
 }
 
 /** 非同期の処理（Promise）を、すべて完了させる。 */
@@ -181,6 +189,7 @@ export function createEngine(
   const control = new ControlStore();
   const states: SyncState[] = [];
   const stops: { reason: StopReason; error?: unknown }[] = [];
+  const ignored: IgnoredEventInfo[] = [];
   let counter = 0;
   const engine = new SyncEngine({
     roomId: "room-a",
@@ -197,9 +206,10 @@ export function createEngine(
     random: () => 0.5,
     onStateChange: (s) => states.push(s),
     onStopped: (reason, error) => stops.push({ reason, error }),
+    onIgnoredEvent: (info) => ignored.push(info),
     ...overrides,
   });
-  return { engine, transport, scheduler, storage, control, states, stops };
+  return { engine, transport, scheduler, storage, control, states, stops, ignored };
 }
 
 /** 接続を開く（connect して、サーバーが open を通知する）。 */
