@@ -11,6 +11,7 @@ import type {
 } from "../src/index";
 
 declare function queueMicrotask(callback: () => void): void;
+declare function structuredClone<T>(value: T): T;
 
 interface FakeIndexDef {
   readonly name: string;
