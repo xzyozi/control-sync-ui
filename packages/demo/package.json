@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/cli.js"
+    "start": "node --import ./e2e/register-esm.mjs dist/cli.js"
   },
   "dependencies": {
     "@csu/core": "*",

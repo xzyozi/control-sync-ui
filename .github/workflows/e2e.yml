@@ -57,4 +57,4 @@ jobs:
       - name: Run Browser E2E
         env:
           CHROME_PATH: ${{ env.chrome_path }}
-        run: node packages/demo/e2e/browser-e2e.mjs
+        run: node --import ./packages/demo/e2e/register-esm.mjs packages/demo/e2e/browser-e2e.mjs
