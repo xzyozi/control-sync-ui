@@ -6,7 +6,7 @@ export interface IncomingRequest {
   readonly headers: Record<string, string | string[] | undefined>;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
-  destroy?(): void;
+  resume?(): void;
 }
 
 export interface ServerResponseLike {

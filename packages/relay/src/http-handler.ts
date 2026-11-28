@@ -138,7 +138,8 @@ function readJsonBody(
         const { bytes, text } = chunkSizeAndText(chunk);
         totalBytes += bytes;
         if (totalBytes > maxBodyBytes) {
-          req.destroy?.();
+          // ソケットを即座に破棄すると 400 応答前に切断されるため、破棄せず読み捨ててエラー応答を返す。
+          req.resume?.();
           fail(new RelayError("INVALID_MESSAGE", "request body too large"));
           return;
         }
