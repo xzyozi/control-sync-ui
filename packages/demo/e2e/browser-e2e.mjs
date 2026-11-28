@@ -15,8 +15,22 @@ async function waitForText(page, testId, expected, timeoutMs = 8000) {
     await page.waitForTimeout(40);
   }
   const last = (await locator.textContent())?.trim() ?? "";
+  const opErr =
+    (
+      await page
+        .getByTestId("op-error")
+        .textContent({ timeout: 100 })
+        .catch(() => "")
+    )?.trim() ?? "";
+  const targetErr =
+    (
+      await page
+        .getByTestId("target-error")
+        .textContent({ timeout: 100 })
+        .catch(() => "")
+    )?.trim() ?? "";
   throw new Error(
-    `Timed out waiting for [data-testid="${testId}"] to equal "${expected}", got "${last}"`,
+    `Timed out waiting for [data-testid="${testId}"] to equal "${expected}", got "${last}" (opError="${opErr}", targetError="${targetErr}")`,
   );
 }
 
@@ -72,18 +86,18 @@ async function main() {
     "room-iso-2",
   ];
 
-  // demo 配信サーバー（別オリジン A）と別ポートの relay サーバー（別オリジン B）を用意する。
+  // demo 配信サーバー（別オリジン A）と別ポートの relay サーバー（別オリジン B、短い lease TTL）を用意する。
   const server = await startDemoServer({
     port: 0,
     initialRooms,
-    leaseTtlMs: 1_500,
-    presenceTtlMs: 1_200,
+    leaseTtlMs: 15_000,
+    presenceTtlMs: 2_500,
   });
   const crossOriginRelay = await startDemoServer({
     port: 0,
-    initialRooms: ["room-cors"],
-    leaseTtlMs: 4_000,
-    presenceTtlMs: 1_200,
+    initialRooms: ["room-cors", "room-lease"],
+    leaseTtlMs: 2_000,
+    presenceTtlMs: 2_500,
   });
 
   const executablePath = process.env.CHROME_PATH || undefined;
@@ -147,6 +161,7 @@ async function main() {
     await operatorAB.getByTestId("select-filter-mode").selectOption("TYPES");
     await operatorAB.getByTestId("input-filter-types").fill("temperature");
     await operatorAB.getByTestId("btn-apply-filter").click();
+    await waitForText(operatorAB, "op-control-seq", "2");
     await waitForText(targetAB, "pending-count", "1");
     await waitForText(operatorAB, "server-event-count", "1");
     await waitForContains(operatorAB, "server-events", "temperature");
@@ -271,16 +286,17 @@ async function main() {
     attachErrorCollector(opPageA, "lease-opA", errors);
     attachErrorCollector(opPageB, "lease-opB", errors);
 
+    const shortLeaseParam = encodeURIComponent(crossOriginRelay.baseUrl);
     await targetLease.goto(
-      `${server.baseUrl}/target.html?roomId=room-lease&targetId=t-lease&presenceIntervalMs=300`,
+      `${server.baseUrl}/target.html?roomId=room-lease&targetId=t-lease&relayBaseUrl=${shortLeaseParam}&presenceIntervalMs=300`,
       { waitUntil: "domcontentloaded" },
     );
     await opPageA.goto(
-      `${server.baseUrl}/operator.html?roomId=room-lease&targetId=t-lease&operatorId=op-a`,
+      `${server.baseUrl}/operator.html?roomId=room-lease&targetId=t-lease&operatorId=op-a&relayBaseUrl=${shortLeaseParam}`,
       { waitUntil: "domcontentloaded" },
     );
     await opPageB.goto(
-      `${server.baseUrl}/operator.html?roomId=room-lease&targetId=t-lease&operatorId=op-b`,
+      `${server.baseUrl}/operator.html?roomId=room-lease&targetId=t-lease&operatorId=op-b&relayBaseUrl=${shortLeaseParam}`,
       { waitUntil: "domcontentloaded" },
     );
     await waitForText(targetLease, "sync-state", "Ready");
