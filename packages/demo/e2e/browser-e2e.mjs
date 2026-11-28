@@ -84,6 +84,7 @@ function attachErrorCollector(page, name, errors, shouldIgnore = () => false) {
 
 async function main() {
   const initialRooms = [
+    "room-demo",
     "room-must-a",
     "room-must-b",
     "room-order",
