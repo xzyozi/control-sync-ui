@@ -4,8 +4,8 @@ document_type: "environment_specification"
 document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
-status: "draft"
-version: "1.8"
+status: "approved"
+version: "1.9"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -30,7 +30,7 @@ related_documents:
 
 - **目的**: 実装の合否を、同じ基準で判定できるようにする。BD と DD が参照する品質ゲートの、実行条件と合格基準を定める。
 - **対象環境**: ローカルの開発環境と、GitHub Actions の CI。
-- **対象範囲**: `core`、`storage-indexeddb`、`relay`、`demo` の4パッケージ（BD §2.2）と、`docs/` 配下の文書。
+- **対象範囲**: `core`、`storage-indexeddb`、`transport-http`、`relay`、`demo` の5パッケージ（BD §2.2）と、`docs/` 配下の文書。
 - **対象外**: 本番環境、公開の手順、親プロジェクト側の環境。
 
 ## 2. ハード要件・制約
@@ -90,7 +90,7 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 - ルートに `package.json` があるため、QG-001〜QG-004 は有効である（`ci-typescript.yml` の仕様）。
 - **パッケージの構成**（[要件定義書](../features/CSU-REQ-001_最小要件定義書.md) の OP-11、OP-08）: npm ワークスペース（`packages/*`）で構成する。パッケージは、`core`、`storage-indexeddb`、`transport-http`、`relay`、`demo` の5つで、実装する時点で追加する。ルートに共通設定（`biome.json`、`tsconfig.base.json`、`vitest.config.ts`）を置き、各パッケージが `typecheck` と `build` のスクリプトを持つ。
 - **QG-001 の範囲**: 現在の Biome の設定は、lint だけを有効にし、書式（フォーマット）の検査は行わない。検査の対象は、`packages/` とルートの `vitest.config.ts` に限る。`.github/scripts/` の既存の検証スクリプト（`validateMermaidMarkdown.mjs` など）は、それぞれのワークフロー（QG-005、QG-006）の対象であり、QG-001 の対象外とする。書式の検査は、実装が増えた段階で追加を検討する。
-- **QG-003 の範囲**: テストは `packages/*/test/**/*.test.ts` を、Node の環境で実行する。ブラウザ固有の API（IndexedDB、EventSource）の検証は、手動確認で補う（[CSU-TEST-001](../test/CSU-TEST-001_テスト計画・結果報告書.md)）。
+- **QG-003 の範囲**: 単体・結合テストは `packages/*/test/**/*.test.ts` を、Node の環境で実行する。ブラウザ固有の API（IndexedDB、EventSource）およびダミー親リポジトリによるサブモジュール統合は、`e2e.yml`（Google Chrome / Playwright）で自動検証する（[CSU-TEST-001](../test/CSU-TEST-001_テスト計画・結果報告書.md)）。
 - **`package-lock.json`**: プロジェクトルートの `package-lock.json` を Git で追跡し、CI は `npm ci` および `setup-node` の npm キャッシュを使用する（`ci-typescript.yml`、`e2e.yml`）。ローカルに Node がない環境でロックファイルを再生成する必要がある場合は、CI の `--before` 設定と同等の 3 日猶予ルール（§4.6）に従う。
 
 ### 4.5 設定・秘密情報
@@ -101,7 +101,7 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 ### 4.6 再現性・サプライチェーン
 
 - **依存の固定**: `package-lock.json` を追跡し、CI は `npm ci` で、ロックファイルのとおりに導入する。
-- **公開直後のパッケージ**: ローカルの開発環境では、パッケージマネージャーに、公開から一定期間（npm の `min-release-age=3`、pnpm の `minimumReleaseAge=4320`）を待つ設定をする。CI 上でロックファイルを生成する手動ワークフロー（`generate-lockfile.yml`）も、同じ趣旨で、`npm install` に `--before`（3日前の時点）を付け、公開から3日以内の版を固定しない。
+- **公開直後のパッケージ**: ローカルの開発環境では、パッケージマネージャーに、公開から一定期間（npm の `min-release-age=3`、pnpm の `minimumReleaseAge=4320`）を待つ設定をする。ロックファイルを再生成・更新する場合も、同じ趣旨で `npm install` に `--before`（3日前の時点）を付け、公開から3日以内の版を固定しない。
 - **CI のブラウザ**: Mermaid の検証に必要な Chrome は、バージョンを固定してインストールする（`validate-mermaid.yml`）。
 
 ## 5. 検証方法
@@ -149,3 +149,4 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.6 | 2026-11-28 | xzyozi | `package-lock.json` をルートにコミットし、`generate-lockfile.yml` を削除して例外 EX-002 を解除。                                                                                                                                                                                |
 | Rev.1.7 | 2026-11-28 | xzyozi | ADR-008（`accepted`）の決定を §4.3 へ反映し、`exports`・`types`・`sideEffects`・`engines`・ワークスペース/`file:` 両対応および統合手順書への参照を追加。                                                                                                                          |
 | Rev.1.8 | 2026-11-28 | xzyozi | §4.3 に版の方針（Git タグ `vX.Y.Z`、破壊的変更時の版上げ、`schemaVersion` / `storageVersion` の互換性範囲）を追加。                                                                                                                                                              |
+| Rev.1.9 | 2026-11-28 | xzyozi | §1 の対象範囲（5パッケージ）・§4.4 の `e2e.yml` 自動検証・§4.6 の `generate-lockfile.yml` 記述整理を反映し、v0.1.0 リリースに向けて status を `approved` へ更新。                                                                                                             |
