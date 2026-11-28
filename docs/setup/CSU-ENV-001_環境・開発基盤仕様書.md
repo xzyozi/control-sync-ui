@@ -5,7 +5,7 @@ document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
 status: "draft"
-version: "1.7"
+version: "1.8"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -67,6 +67,11 @@ related_documents:
 - **成果物**: 各パッケージの `npm run build` が、`dist/` に ESM（`.js` 拡張子付きの相対インポート）と型定義（`.d.ts`）を出力する。`dist/` は Git に含めない（[ADR-008](../adr/ADR-008_サブモジュールとしての消費方式.md)）。
 - **パッケージ契約**: `core`・`storage-indexeddb`・`transport-http`・`relay` は `package.json` で `exports`（`.` の `types` / `import` / `default`）・`sideEffects: false`・`engines`（`node >= 20`）を公開する。内部のパッケージ間依存は `file:../core` を用い、`file:` 参照時にも公開レジストリへ解決を試みない。
 - **配布・組み込み**: 親プロジェクトへは Git サブモジュールで組み込む。親はサブモジュール内で `npm ci && npm run build` を実行したうえで、**npm workspaces 併用**または **`file:` 依存**で各パッケージを参照する。具体的な手順は [サブモジュール統合手順書](../how-to/submodule_integration.md) を正本とする。npm レジストリへの公開は、v0.1 の対象外。
+- **版の管理方針（リリース・タグ・互換性・破壊的変更）**:
+  - **Git タグとリリース版**: リリース時は [リリース運用手順書](../how-to/release_branch_operation.md) に従い `main` へ反映したうえで `v<MAJOR>.<MINOR>.<PATCH>`（例: `v0.1.0`）のタグを付与する。ワークスペース内の `@csu/*` 各パッケージの `package.json` の `version` は同一値に揃える。親プロジェクトは原則としてリリース済みタグへピン留めして利用する。
+  - **破壊的変更の扱い**: 公開 API（`exports`・`StoragePort` / `TransportPort` 契約）・通信プロトコル・永続化スキーマのいずれかに破壊的変更を加える場合は、設計正本（IF / DD / DS / ENV）および必要な ADR を先に更新し、`0.x` 系では `MINOR`（`1.0.0` 以降は `MAJOR`）を上げて移行手順を明記する。
+  - **`schemaVersion`（通信契約）の互換性**: v0.1 では `"1"` の厳格一致とし、不一致時は状態を変更せず `SCHEMA_VERSION_MISMATCH` で安全停止する（[IF §5](../design/CSU-IF-001_IF仕様書.md)、[DD §2.3](../design/CSU-DD-001_詳細設計書.md)）。非互換なメッセージ変更時は `schemaVersion` を更新し、互換変換（アップキャスター等）は #7 で扱う。
+  - **`storageVersion`（永続化形式）の互換性**: v0.1 では `STORAGE_VERSION = "1"` / `DB_SCHEMA_VERSION = 1` とし、上位版・不一致時はデータを変更せず `UnsupportedStorageVersionError` で安全停止する（[DS §4.1](../design/CSU-DS-001_データ構造仕様書.md)）。移行導入時は DS §4.1 の移行表を先に更新する。
 
 ### 4.4 CI/CD・品質ゲート
 
@@ -143,3 +148,4 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.5 | 2026-11-28 | xzyozi | ロックファイル生成ワークフローに、公開から3日以内の版を固定しない設定（`--before`）を追加し、§4.6 に明記。                                                                                                                                                                      |
 | Rev.1.6 | 2026-11-28 | xzyozi | `package-lock.json` をルートにコミットし、`generate-lockfile.yml` を削除して例外 EX-002 を解除。                                                                                                                                                                                |
 | Rev.1.7 | 2026-11-28 | xzyozi | ADR-008（`accepted`）の決定を §4.3 へ反映し、`exports`・`types`・`sideEffects`・`engines`・ワークスペース/`file:` 両対応および統合手順書への参照を追加。                                                                                                                          |
+| Rev.1.8 | 2026-11-28 | xzyozi | §4.3 に版の方針（Git タグ `vX.Y.Z`、破壊的変更時の版上げ、`schemaVersion` / `storageVersion` の互換性範囲）を追加。                                                                                                                                                              |
