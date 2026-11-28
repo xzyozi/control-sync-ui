@@ -577,7 +577,6 @@ function driveCursor(
       continue: () => {
         tx?.beginOp();
         queueMicrotask(step);
-        tx?.endOp();
       },
     };
     req.onsuccess?.({});

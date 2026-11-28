@@ -98,8 +98,6 @@ function waitTransaction(tx: IdbTransactionLike): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onabort = () =>
       reject(toError(tx.error, "IndexedDB transaction aborted"));
-    tx.onerror = () =>
-      reject(toError(tx.error, "IndexedDB transaction error"));
   });
 }
 
@@ -118,6 +116,7 @@ export class IndexedDbStoragePort implements StoragePort {
 
   private db: IdbDatabaseLike | null = null;
   private opening: Promise<IdbDatabaseLike> | null = null;
+  private connectionGeneration = 0;
 
   constructor(options: IndexedDbStorageOptions = {}) {
     const factory =
@@ -155,6 +154,7 @@ export class IndexedDbStoragePort implements StoragePort {
 
   /** データベース接続を閉じる。 */
   close(): void {
+    this.connectionGeneration += 1;
     if (this.db !== null) {
       this.db.close();
       this.db = null;
@@ -207,7 +207,9 @@ export class IndexedDbStoragePort implements StoragePort {
         } satisfies DeliveryRecord);
         addDeliveryReq.onerror = () => {
           if (isErrorNamed(addDeliveryReq.error, "ConstraintError")) {
-            duplicate = true;
+            failure = new StorageCorruptionError(
+              `delivery record already exists for event: ${event.eventId}`,
+            );
           } else {
             failure = toError(
               addDeliveryReq.error,
@@ -224,21 +226,31 @@ export class IndexedDbStoragePort implements StoragePort {
           return;
         }
         resolve({
-          ...event,
           localSeq: assignedSeq,
+          eventId: event.eventId,
+          roomId: event.roomId,
+          payload: event.payload,
+          createdAt: event.createdAt,
         });
       };
 
       const rejectTx = () => {
-        if (duplicate || isErrorNamed(tx.error, "ConstraintError")) {
+        if (duplicate) {
           reject(new DuplicateEventError(event.eventId));
           return;
         }
-        reject(failure ?? toError(tx.error, "append transaction aborted"));
+        if (failure !== null) {
+          reject(failure);
+          return;
+        }
+        if (isErrorNamed(tx.error, "ConstraintError")) {
+          reject(new DuplicateEventError(event.eventId));
+          return;
+        }
+        reject(toError(tx.error, "append transaction aborted"));
       };
 
       tx.onabort = rejectTx;
-      tx.onerror = rejectTx;
     });
   }
 
@@ -250,6 +262,7 @@ export class IndexedDbStoragePort implements StoragePort {
     const results: StoredEvent[] = [];
 
     const txDone = waitTransaction(tx);
+    txDone.catch(() => {});
     await new Promise<void>((resolve, reject) => {
       const req = eventsStore.openCursor();
       req.onsuccess = () => {
@@ -295,6 +308,7 @@ export class IndexedDbStoragePort implements StoragePort {
     );
 
     const txDone = waitTransaction(tx);
+    txDone.catch(() => {});
     const eventLookups: Promise<{ eventId: string; record: EventRecord | undefined }>[] =
       [];
     // トランザクションが不活性化しないよう、カーソル反復中に同期的に get リクエストを発行する。
@@ -307,12 +321,14 @@ export class IndexedDbStoragePort implements StoragePort {
           return;
         }
         const delivery = cursor.value as DeliveryRecord;
-        eventLookups.push(
-          promisifyRequest(eventsById.get(delivery.eventId)).then((record) => ({
+        const lookup = promisifyRequest(eventsById.get(delivery.eventId)).then(
+          (record) => ({
             eventId: delivery.eventId,
             record: record as EventRecord | undefined,
-          })),
+          }),
         );
+        lookup.catch(() => {});
+        eventLookups.push(lookup);
         cursor.continue();
       };
       req.onerror = () =>
@@ -321,12 +337,13 @@ export class IndexedDbStoragePort implements StoragePort {
 
     const lookedUp = await Promise.all(eventLookups);
     const results: StoredEvent[] = [];
+    let corruptionError: StorageCorruptionError | null = null;
     for (const { eventId, record } of lookedUp) {
       if (record === undefined) {
-        tx.abort?.();
-        throw new StorageCorruptionError(
+        corruptionError = new StorageCorruptionError(
           `missing event record for delivery: ${eventId}`,
         );
+        break;
       }
       results.push({
         localSeq: record.localSeq,
@@ -338,6 +355,9 @@ export class IndexedDbStoragePort implements StoragePort {
     }
 
     await txDone;
+    if (corruptionError !== null) {
+      throw corruptionError;
+    }
     return results;
   }
 
@@ -381,7 +401,6 @@ export class IndexedDbStoragePort implements StoragePort {
       const rejectTx = () =>
         reject(failure ?? toError(tx.error, "markSent transaction aborted"));
       tx.onabort = rejectTx;
-      tx.onerror = rejectTx;
     });
   }
 
@@ -394,16 +413,29 @@ export class IndexedDbStoragePort implements StoragePort {
     if (this.opening !== null) {
       return this.opening;
     }
-    this.opening = this.openDatabase().catch((error) => {
-      this.opening = null;
-      throw error;
-    });
-    return this.opening;
+    const generation = this.connectionGeneration;
+    const opening = this.openDatabase(generation).then(
+      (db) => {
+        if (this.opening === opening) {
+          this.opening = null;
+        }
+        return db;
+      },
+      (error) => {
+        if (this.opening === opening) {
+          this.opening = null;
+        }
+        throw error;
+      },
+    );
+    this.opening = opening;
+    return opening;
   }
 
-  private async openDatabase(): Promise<IdbDatabaseLike> {
+  private async openDatabase(generation: number): Promise<IdbDatabaseLike> {
     const db = await new Promise<IdbDatabaseLike>((resolve, reject) => {
       const req = this.idbFactory.open(this.dbName, DB_SCHEMA_VERSION);
+      let settled = false;
 
       req.onupgradeneeded = (event) => {
         const upgradeDb = req.result;
@@ -438,10 +470,18 @@ export class IndexedDbStoragePort implements StoragePort {
       };
 
       req.onblocked = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         reject(new StorageBlockedError());
       };
 
       req.onerror = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         if (isErrorNamed(req.error, "VersionError")) {
           reject(new UnsupportedStorageVersionError("newer-db", STORAGE_VERSION));
           return;
@@ -450,15 +490,31 @@ export class IndexedDbStoragePort implements StoragePort {
       };
 
       req.onsuccess = () => {
-        resolve(req.result);
+        const openedDb = req.result;
+        if (settled) {
+          openedDb.close();
+          return;
+        }
+        settled = true;
+        resolve(openedDb);
       };
     });
+
+    if (generation !== this.connectionGeneration) {
+      db.close();
+      throw new Error("IndexedDbStoragePort was closed while opening");
+    }
 
     try {
       await this.verifyStorageVersion(db);
     } catch (error) {
       db.close();
       throw error;
+    }
+
+    if (generation !== this.connectionGeneration) {
+      db.close();
+      throw new Error("IndexedDbStoragePort was closed while opening");
     }
 
     db.onversionchange = () => {
@@ -487,6 +543,7 @@ export class IndexedDbStoragePort implements StoragePort {
 
     const tx = db.transaction([STORE_META], "readonly");
     const txDone = waitTransaction(tx);
+    txDone.catch(() => {});
     const meta = tx.objectStore(STORE_META);
     const record = (await promisifyRequest(meta.get("storageVersion"))) as
       | MetaRecord
