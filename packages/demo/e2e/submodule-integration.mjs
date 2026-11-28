@@ -43,8 +43,7 @@ const PARENT_TSCONFIG = {
   include: ["src"],
 };
 
-const PARENT_APP_TS = `import assert from "node:assert/strict";
-import {
+const PARENT_APP_TS = `import {
   ControlStore,
   DomainStore,
   InMemoryStoragePort,
@@ -55,13 +54,19 @@ import { IndexedDbStoragePort } from "@csu/storage-indexeddb";
 import { HttpTransport } from "@csu/transport-http";
 import { RelayCore, startRelayServer } from "@csu/relay";
 
+function assertEqual<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(\`Expected \${String(expected)}, got \${String(actual)}\`);
+  }
+}
+
 const reducer: Reducer<number> = (state, event: StoredEvent) => {
   const amount = event.payload.amount;
   return state + (typeof amount === "number" ? amount : 0);
 };
 
 // 型定義・エクスポートの結合確認（ブラウザ実行専用クラスが参照可能であること）。
-assert.equal(typeof IndexedDbStoragePort.open, "function");
+assertEqual(typeof IndexedDbStoragePort.open, "function");
 
 const relay = new RelayCore({ schemaVersion: "1" });
 relay.createRoom("parent-room");
@@ -71,7 +76,7 @@ try {
   const storage = new InMemoryStoragePort();
   const domain = new DomainStore(storage, "parent-room", reducer, 0);
   await domain.apply({ eventId: "p-1", payload: { type: "add", amount: 21 } });
-  assert.equal(domain.state, 21);
+  assertEqual(domain.state, 21);
 
   const controlStore = new ControlStore();
   const transport = new HttpTransport({
@@ -85,8 +90,8 @@ try {
     requestId: "parent-req-1",
   });
   controlStore.applyControl(snapshot.controlSeq, snapshot.control);
-  assert.equal(controlStore.getControlSeq(), 0);
-  assert.equal(controlStore.getControl().sendFilter.mode, "NONE");
+  assertEqual(controlStore.getControlSeq(), 0);
+  assertEqual(controlStore.getControl().sendFilter.mode, "NONE");
 
   await transport.sendPresence({
     roomId: "parent-room",
