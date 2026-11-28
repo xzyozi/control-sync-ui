@@ -91,6 +91,7 @@ async function catchError(promise: Promise<unknown>): Promise<TransportError> {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("HttpTransport.fetchControl (IF-001)", () => {
@@ -121,38 +122,28 @@ describe("HttpTransport.fetchControl (IF-001)", () => {
   });
 
   it("TC-302: options.fetch を省略してもグローバル fetch を this 束縛なしで呼べる", async () => {
-    const g = globalThis as { fetch?: unknown };
-    const originalFetch = g.fetch;
     const snapshot = {
       controlSeq: 1,
       control: { sendFilter: { mode: "ALL" }, holderId: "op-1" },
     };
     let receivedThis: unknown = "unset";
-    g.fetch = async function (this: unknown) {
+    vi.stubGlobal("fetch", async function (this: unknown) {
       receivedThis = this;
       return response(200, snapshot);
-    };
-    try {
-      const transport = new HttpTransport({
-        baseUrl: "https://example.test/api",
-        schemaVersion: "1",
-        EventSource: FakeEventSource,
-        AbortController: FakeAbortController,
-      });
-      const result = await transport.fetchControl({
-        roomId: "r",
-        targetId: "t",
-        requestId: "q",
-      });
-      expect(result).toEqual(snapshot);
-      expect(receivedThis).toBeUndefined();
-    } finally {
-      if (originalFetch === undefined) {
-        delete g.fetch;
-      } else {
-        g.fetch = originalFetch;
-      }
-    }
+    });
+    const transport = new HttpTransport({
+      baseUrl: "https://example.test/api",
+      schemaVersion: "1",
+      EventSource: FakeEventSource,
+      AbortController: FakeAbortController,
+    });
+    const result = await transport.fetchControl({
+      roomId: "r",
+      targetId: "t",
+      requestId: "q",
+    });
+    expect(result).toEqual(snapshot);
+    expect(receivedThis).toBeUndefined();
   });
 
   it("TC-303: 本文が想定外または不正 JSON なら INVALID_RESPONSE", async () => {
