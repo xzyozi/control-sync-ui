@@ -53,6 +53,9 @@ async function main(): Promise<void> {
   const targetId = params.get("targetId") ?? DEFAULT_DEMO_TARGET_ID;
   const initialOperatorId =
     params.get("operatorId") ?? DEFAULT_DEMO_OPERATOR_ID;
+  const relayBaseUrl = (
+    params.get("relayBaseUrl") ?? window.location.origin
+  ).replace(/\/+$/, "");
 
   el("op-room").textContent = roomId;
   el("op-target-id").textContent = targetId;
@@ -66,7 +69,7 @@ async function main(): Promise<void> {
 
   async function refresh(): Promise<void> {
     const res = await fetch(
-      `/demo-api/rooms/${encodeURIComponent(roomId)}/summary?targetId=${encodeURIComponent(targetId)}`,
+      `${relayBaseUrl}/demo-api/rooms/${encodeURIComponent(roomId)}/summary?targetId=${encodeURIComponent(targetId)}`,
     );
     if (!res.ok) {
       return;
@@ -94,7 +97,7 @@ async function main(): Promise<void> {
 
   async function callApi(path: string, body: unknown): Promise<void> {
     el("op-error").textContent = "";
-    const res = await fetch(path, {
+    const res = await fetch(`${relayBaseUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -160,7 +163,7 @@ async function main(): Promise<void> {
   // サーバー更新通知（SSE）を購読し、変更があるたびにサマリを再取得する。
   const observerId = `operator-observer-${Date.now()}`;
   const es = new EventSource(
-    `/rooms/${encodeURIComponent(roomId)}/notifications?targetId=${encodeURIComponent(observerId)}&schemaVersion=${encodeURIComponent(DEMO_SCHEMA_VERSION)}&requestId=${encodeURIComponent(nextRequestId())}`,
+    `${relayBaseUrl}/rooms/${encodeURIComponent(roomId)}/notifications?targetId=${encodeURIComponent(observerId)}&schemaVersion=${encodeURIComponent(DEMO_SCHEMA_VERSION)}&requestId=${encodeURIComponent(nextRequestId())}`,
   );
   es.onmessage = () => {
     void refresh();

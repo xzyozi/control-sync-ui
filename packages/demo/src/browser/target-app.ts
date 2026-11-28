@@ -37,9 +37,17 @@ async function main(): Promise<void> {
   const roomId = params.get("roomId") ?? DEFAULT_DEMO_ROOM_ID;
   const targetId = params.get("targetId") ?? DEFAULT_DEMO_TARGET_ID;
   const dbName = params.get("dbName") ?? `csu-demo-${roomId}-${targetId}`;
+  const relayBaseUrl = (
+    params.get("relayBaseUrl") ?? window.location.origin
+  ).replace(/\/+$/, "");
   const rawPresence = Number(params.get("presenceIntervalMs") ?? "5000");
   const presenceIntervalMs =
     Number.isFinite(rawPresence) && rawPresence > 0 ? rawPresence : 5000;
+  const rawRetry = Number(params.get("retryDelayMs") ?? "0");
+  const retryDelaysMs =
+    Number.isFinite(rawRetry) && rawRetry > 0
+      ? [rawRetry, rawRetry * 2, rawRetry * 4]
+      : undefined;
   const autoConnect = params.get("autoConnect") !== "false";
 
   el("target-room").textContent = roomId;
@@ -93,7 +101,7 @@ async function main(): Promise<void> {
   await domainStore.restore();
 
   const transport = new HttpTransport({
-    baseUrl: window.location.origin,
+    baseUrl: relayBaseUrl,
     schemaVersion: DEMO_SCHEMA_VERSION,
   });
 
@@ -104,6 +112,7 @@ async function main(): Promise<void> {
     controlStore,
     transport,
     presenceIntervalMs,
+    ...(retryDelaysMs !== undefined ? { retryDelaysMs } : {}),
     scheduler: {
       setTimeout: (cb, ms) => {
         const id = window.setTimeout(cb, ms);
@@ -187,9 +196,15 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
+  const stateEl = document.querySelector('[data-testid="sync-state"]');
+  if (stateEl instanceof HTMLElement) {
+    stateEl.textContent = "Error";
+  }
   const errEl = document.querySelector('[data-testid="target-error"]');
   if (errEl instanceof HTMLElement) {
     errEl.textContent =
-      error instanceof Error ? error.message : String(error);
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error);
   }
 });
