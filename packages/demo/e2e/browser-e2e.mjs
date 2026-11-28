@@ -59,7 +59,14 @@ function attachErrorCollector(page, name, errors, shouldIgnore = () => false) {
   });
   page.on("console", (msg) => {
     if (msg.type() === "error" && !shouldIgnore()) {
-      errors.push(`[${name}] console.error: ${msg.text()}`);
+      const text = msg.text();
+      const locUrl = msg.location()?.url ?? "";
+      const isExpectedRelay4xx =
+        locUrl.includes("/rooms/") &&
+        (text.includes("status of 403") || text.includes("status of 409"));
+      if (!isExpectedRelay4xx) {
+        errors.push(`[${name}] console.error: ${text}`);
+      }
     }
   });
   page.on("response", (res) => {

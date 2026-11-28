@@ -28,6 +28,7 @@ export function renderIndexHtml(): string {
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
+  <link rel="icon" href="data:," />
   <title>control-sync-ui 2画面デモ</title>
   <style>
     ${BASE_STYLES}
@@ -56,6 +57,7 @@ export function renderTargetHtml(): string {
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
+  <link rel="icon" href="data:," />
   <title>対象端末 - control-sync-ui Demo</title>
   <style>${BASE_STYLES}</style>
   ${IMPORT_MAP_HTML}
@@ -113,6 +115,7 @@ export function renderOperatorHtml(): string {
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
+  <link rel="icon" href="data:," />
   <title>外部PC操作画面 - control-sync-ui Demo</title>
   <style>${BASE_STYLES}</style>
   ${IMPORT_MAP_HTML}
