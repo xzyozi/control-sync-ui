@@ -346,7 +346,7 @@ describe("SyncEngine: 再試行と停止", () => {
   });
 
   it("再試行しても同じ結果になるエラー（INVALID_MESSAGE、ROOM_NOT_FOUND）は、再試行せずに Stopped になる", async () => {
-    for (const code of ["INVALID_MESSAGE", "ROOM_NOT_FOUND"]) {
+    for (const code of ["INVALID_MESSAGE", "ROOM_NOT_FOUND"] as const) {
       const f = createEngine();
       f.transport.fetchErrors = [new TransportError("bad", code)];
       await openConnection(f);
