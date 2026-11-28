@@ -5,7 +5,7 @@ document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
 status: "draft"
-version: "1.5"
+version: "1.6"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -85,7 +85,7 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 - **パッケージの構成**（[要件定義書](../features/CSU-REQ-001_最小要件定義書.md) の OP-11、OP-08）: npm ワークスペース（`packages/*`）で構成する。パッケージは、`core`、`storage-indexeddb`、`transport-http`、`relay`、`demo` の5つで、実装する時点で追加する。ルートに共通設定（`biome.json`、`tsconfig.base.json`、`vitest.config.ts`）を置き、各パッケージが `typecheck` と `build` のスクリプトを持つ。
 - **QG-001 の範囲**: 現在の Biome の設定は、lint だけを有効にし、書式（フォーマット）の検査は行わない。検査の対象は、`packages/` とルートの `vitest.config.ts` に限る。`.github/scripts/` の既存の検証スクリプト（`validateMermaidMarkdown.mjs` など）は、それぞれのワークフロー（QG-005、QG-006）の対象であり、QG-001 の対象外とする。書式の検査は、実装が増えた段階で追加を検討する。
 - **QG-003 の範囲**: テストは `packages/*/test/**/*.test.ts` を、Node の環境で実行する。ブラウザ固有の API（IndexedDB、EventSource）の検証は、手動確認で補う（[CSU-TEST-001](../test/CSU-TEST-001_テスト計画・結果報告書.md)）。
-- **`package-lock.json`**: ローカルに Node がない場合は、手動実行のワークフロー `generate-lockfile.yml`（Actions の「Generate package-lock.json」）で生成し、成果物（artifact）の `package-lock.json` を、ルートにコミットする。生成されるまでの間は、期限つきの例外 EX-002（§6）として、CI は `npm install` で代用し、`setup-node` のキャッシュはロックファイルがあるときだけ有効にする（`ci-typescript.yml`）。
+- **`package-lock.json`**: プロジェクトルートの `package-lock.json` を Git で追跡し、CI は `npm ci` および `setup-node` の npm キャッシュを使用する（`ci-typescript.yml`、`e2e.yml`）。ローカルに Node がない環境でロックファイルを再生成する必要がある場合は、CI の `--before` 設定と同等の 3 日猶予ルール（§4.6）に従う。
 
 ### 4.5 設定・秘密情報
 
@@ -111,7 +111,7 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | ID     | 対象                                        | 標準との差異                                                                       | 理由・制約                                             | 影響                                                                     | 代替対応                                                                        | 解除条件                                                                                                                 |
 | :----- | :------------------------------------------ | :--------------------------------------------------------------------------------- | :----------------------------------------------------- | :----------------------------------------------------------------------- | :------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------- |
 | EX-001 | QG-001〜QG-004（実装がない期間）            | `package.json` がないため、CI がスキップされる。                                   | 実装の前の段階で、検証の対象がない。                   | 実装の品質を、まだ CI で確認できない。                                   | 文書の検証（QG-005、QG-006）のみ。                                              | **解除済み**（2026-11-28）。ルートに `package.json` を追加した。                                                         |
-| EX-002 | 依存の固定（`package-lock.json`、`npm ci`） | ロックファイルがないため、CI は `npm ci` ではなく `npm install` で依存を導入する。 | ローカルに Node がなく、ロックファイルを生成できない。 | 依存の版が、実行のたびに変わりうる（サプライチェーンの固定ができない）。 | 手動実行のワークフロー `generate-lockfile.yml` で生成し、成果物をコミットする。 | **期限: 実装の2つ目の PR より前。** `package-lock.json` をコミットした時点で解除し、`generate-lockfile.yml` を削除する。 |
+| EX-002 | 依存の固定（`package-lock.json`、`npm ci`） | ロックファイルがないため、CI は `npm ci` ではなく `npm install` で依存を導入する。 | ローカルに Node がなく、ロックファイルを生成できない。 | 依存の版が、実行のたびに変わりうる（サプライチェーンの固定ができない）。 | 手動実行のワークフロー `generate-lockfile.yml` で生成し、成果物をコミットする。 | **解除済み**（2026-11-28）。`package-lock.json` をコミットし、`generate-lockfile.yml` を削除した。 |
 
 ## 7. 関連文書
 
@@ -140,3 +140,4 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.3 | 2026-11-28 | xzyozi | CI 失敗（`setup-node` の `cache: npm` がロックファイルなしで失敗）への対応。`ci-typescript.yml` のキャッシュをロックファイルがあるときだけ有効にし、ロックファイル生成用の手動ワークフローを追加。期限つきの例外 EX-002 を登録。§4.2 の Biome の記述を実態（lint のみ）に修正。 |
 | Rev.1.4 | 2026-11-28 | xzyozi | CI の lint（QG-001）が、既存の `.github/scripts/validateMermaidMarkdown.mjs` の `noForEach` で失敗したため、Biome の検査対象を `packages/` とルートの `vitest.config.ts` に限定し、QG-001 の範囲として明記。                                                                    |
 | Rev.1.5 | 2026-11-28 | xzyozi | ロックファイル生成ワークフローに、公開から3日以内の版を固定しない設定（`--before`）を追加し、§4.6 に明記。                                                                                                                                                                      |
+| Rev.1.6 | 2026-11-28 | xzyozi | `package-lock.json` をルートにコミットし、`generate-lockfile.yml` を削除して例外 EX-002 を解除。                                                                                                                                                                                |
