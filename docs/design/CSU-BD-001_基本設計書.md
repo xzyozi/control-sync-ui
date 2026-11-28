@@ -5,7 +5,7 @@ document_number: "CSU-BD-001"
 document_role: "normative"
 ssot_scope: "system_architecture"
 status: "approved"
-version: "1.4"
+version: "1.5"
 created_at: "2026-11-26"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -162,11 +162,11 @@ C-010 は、`transport-http`（`TransportPort` の HTTP と SSE の実装）で�
 
 - **外部アクター・外部システム**: 外部PC（操作者）、対象端末（ブラウザ）、親プロジェクト。
 - **入出力と信頼境界**: 対象端末と外部PCからサーバーへの入力は、信頼できない入力として扱う。サーバーは、メッセージの形式、`schemaVersion`、`controlSeq`、lease を検証する。
-- **認証・認可境界**: v0.1 は認証を持たず、信頼できるネットワークでの単体検証だけを想定する。認可（認証トークン、テナント分離、サーバー側不変条件の検証）は [#8](https://github.com/xzyozi/control-sync-ui/issues/8) で、インターネット公開の前に追加する。lease を持たない操作は、認可とは別に、サーバーがロックの判定で拒否する（D-01）。
+- **認証・認可境界**: 認証は HTTP 境界（`authenticate`）で Bearer トークンまたは資格情報から `RelayPrincipal` を解決し、未認証は `UNAUTHORIZED`（401）で拒否する。認可（`allowedRoomIds`、`targetIds`、`operatorIds` によるなりすまし防止、`authorize` フック、テナント物理分離 `tenantId`）と Mutation のビジネスルール検証（`onValidatePushEvents` 等）はサーバーコア（`RelayCore`）が一元的に実施する（[#8](https://github.com/xzyozi/control-sync-ui/issues/8)）。認証フックを省略した場合は、v0.1 互換の信頼ネットワーク単体検証モードとして動作する。lease を持たない操作は、認可とは別に、サーバーがロックの判定で拒否する（D-01）。
 - **タイムアウトと再試行制御**: lease、presence、HTTP 呼び出しのタイムアウトと再試行の上限は、DD で定める（D-05）。
 - **排他制御・競合防止**: 制御状態の変更は、単一の排他ロック（Exclusive Lease Lock）で守る。複数の操作者の競合ポリシーは、後続課題 [#2](https://github.com/xzyozi/control-sync-ui/issues/2) とする。
 - **失敗時保全契約**: `schemaVersion` の不一致を検出したら、メッセージを適用せず、永続状態を変更せず、エラーを呼び出し元へ通知する（要件定義書 NFR-03）。`STALE_CONTROL_SEQ` で拒否された送信のイベントは、破棄せず、未送信のまま保持し、制御状態を取得し直してから再評価する（[DD §3.2](./CSU-DD-001_詳細設計書.md)）。
-- **機密情報・監査ログ方針**: v0.1 は機密データを扱わない前提とする。認可と合わせて #8 で定める。
+- **機密情報・監査ログ方針**: 監査ログ（`onAudit`）は操作種別・Room・テナント・主体・相関 ID・成否のみを記録し、認証トークンやイベントの `payload` 本文などの機密情報は出力しない。TLS 終端はリバースプロキシ層で実施する。
 
 ---
 
@@ -201,3 +201,4 @@ C-010 は、`transport-http`（`TransportPort` の HTTP と SSE の実装）で�
 | Rev.1.2 | 2026-11-28 | xzyozi | DD（CSU-DD-001）、DS（CSU-DS-001）、環境・開発基盤仕様書（CSU-ENV-001）の作成に伴い、「未作成」の記述を参照に置き換え。コンポーネントと DD の機能 ID の対応を追加。`TransportPort` の実装の置き場所は未決と明記（OP-08）。D-03 で `StoragePort` の責務に送信状態の更新を追加（`events` は追記だけという不変条件を維持）。拒否されたイベントの扱いを確定済みとして更新。 |
 | Rev.1.3 | 2026-11-28 | xzyozi | OP-08 の確定に伴い、`TransportPort` の HTTP と SSE の実装を担うコンポーネント C-010（`transport-http`）を追加。C-006、C-009、依存方向の記述を更新。                                                                                                                                                                                                                     |
 | Rev.1.4 | 2026-11-28 | xzyozi | 実装（`core`）に合わせて、C-003（Reactive Outbox）の依存先を、C-002 と `StoragePort`（C-005）に変更（未送信のイベントを `StoragePort` から直接読むため。DD F-003 と対応）。                                                                                                                                                                                             |
+| Rev.1.5 | 2026-11-28 | xzyozi | #8 対応として §3.2 に認証・認可境界、テナント物理分離、不変条件検証、および秘密情報・`payload` 非記録の監査ログ方針を追記。 |

@@ -1,7 +1,13 @@
 import { RelayError } from "./errors.js";
 import type { IncomingRequest, ServerResponseLike } from "./node-types.js";
 import type { RelayCore } from "./relay-core.js";
-import type { Envelope, Notification } from "./types.js";
+import type {
+  Envelope,
+  Notification,
+  RelayEndpoint,
+  RelayPrincipal,
+  RelayRequestContext,
+} from "./types.js";
 import { isRecord } from "./validation.js";
 
 declare const console: { error: (...data: unknown[]) => void };
@@ -20,6 +26,22 @@ const ROOM_ROUTE_RE =
 // HTTP ヘッダー値として安全な可視 ASCII と半角スペースのみを許可する（CR/LF や非 ASCII で ERR_INVALID_CHAR を防ぐ）。
 const SAFE_HEADER_VALUE_RE = /^[\x20-\x7E]+$/;
 
+export interface RelayAuthRequest {
+  readonly method: string;
+  readonly pathname: string;
+  readonly roomId: string;
+  readonly endpoint: RelayEndpoint;
+  /** Authorization Bearer トークン、または SSE の `token` クエリパラメータ。 */
+  readonly token: string | undefined;
+  readonly headers: Record<string, string | string[] | undefined>;
+  readonly query: ReadonlyMap<string, string>;
+}
+
+/** 認証トークン／資格情報から主体を解決するフック（#8）。null/undefined で 401。 */
+export type RelayAuthenticator = (
+  request: RelayAuthRequest,
+) => RelayPrincipal | null | undefined | Promise<RelayPrincipal | null | undefined>;
+
 export interface RelayHttpOptions {
   /**
    * 現在時刻（ミリ秒）の供給元。lease 期限タイマーの計算に使う。
@@ -34,6 +56,12 @@ export interface RelayHttpOptions {
    * `null` を指定すると CORS ヘッダーを付与しない。
    */
   readonly corsOrigin?: string | null;
+  /**
+   * `Access-Control-Allow-Credentials` を付与するか（Cookie 認証時などに `true`）。
+   */
+  readonly allowCredentials?: boolean;
+  /** 認証フック（#8）。省略時は認証なし（v0.1 互換）。 */
+  readonly authenticate?: RelayAuthenticator;
   /** 想定外の内部例外を処理する。既定は標準エラーへの出力。 */
   readonly onInternalError?: (error: unknown) => void;
 }
@@ -238,9 +266,32 @@ function readJsonBody(
   });
 }
 
+function extractAuthToken(
+  req: IncomingRequest,
+  query: ReadonlyMap<string, string>,
+  allowQueryToken: boolean,
+): string | undefined {
+  const rawAuth = headerValue(req.headers.authorization);
+  if (rawAuth !== undefined) {
+    const match = /^Bearer\s+(.+)$/i.exec(rawAuth);
+    const candidate = match?.[1]?.trim();
+    if (candidate !== undefined && candidate.length > 0) {
+      return candidate;
+    }
+  }
+  if (allowQueryToken) {
+    const queryToken = query.get("token")?.trim();
+    if (queryToken !== undefined && queryToken.length > 0) {
+      return queryToken;
+    }
+  }
+  return undefined;
+}
+
 function applyCors(
   res: ServerResponseLike,
   corsOrigin: string | null,
+  allowCredentials: boolean,
 ): void {
   if (corsOrigin === null) {
     return;
@@ -249,9 +300,12 @@ function applyCors(
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, X-Schema-Version, X-Request-Id",
+    "Content-Type, X-Schema-Version, X-Request-Id, Authorization",
   );
   res.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
+  if (allowCredentials) {
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
 }
 
 function writeJson(
@@ -260,13 +314,16 @@ function writeJson(
   body: unknown,
   requestId: string | undefined,
   corsOrigin: string | null,
+  allowCredentials: boolean,
 ): void {
   if (res.writableEnded) {
     return;
   }
   res.statusCode = status;
-  applyCors(res, corsOrigin);
+  applyCors(res, corsOrigin, allowCredentials);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   if (isSafeHeaderValue(requestId)) {
     res.setHeader("X-Request-Id", requestId);
   }
@@ -278,12 +335,14 @@ function writeEmpty(
   status: number,
   requestId: string | undefined,
   corsOrigin: string | null,
+  allowCredentials: boolean,
 ): void {
   if (res.writableEnded) {
     return;
   }
   res.statusCode = status;
-  applyCors(res, corsOrigin);
+  applyCors(res, corsOrigin, allowCredentials);
+  res.setHeader("X-Content-Type-Options", "nosniff");
   if (isSafeHeaderValue(requestId)) {
     res.setHeader("X-Request-Id", requestId);
   }
@@ -301,6 +360,8 @@ export function createRelayHandler(
   const now = options.now ?? (() => Date.now());
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const corsOrigin = options.corsOrigin === undefined ? "*" : options.corsOrigin;
+  const allowCredentials = options.allowCredentials ?? false;
+  const authenticate = options.authenticate;
   const onInternalError =
     options.onInternalError ??
     ((error) => console.error("[relay] unexpected http error:", error));
@@ -353,6 +414,7 @@ export function createRelayHandler(
     roomId: string,
     targetId: string,
     env: Envelope,
+    context: RelayRequestContext | undefined,
   ) => {
     let streamClosed = false;
     let disconnectRelay: (() => void) | null = null;
@@ -386,8 +448,8 @@ export function createRelayHandler(
       }
     };
 
-    // 共通項目・Room・targetId の検証を先に行い、失敗時は通常の HTTP エラーを返す（IF §4.3.3）。
-    disconnectRelay = relay.connect(roomId, { targetId }, listener, env);
+    // 共通項目・認可・Room・targetId の検証を先に行い、失敗時は通常の HTTP エラーを返す（IF §4.3.3）。
+    disconnectRelay = relay.connect(roomId, { targetId }, listener, env, context);
     if (closed) {
       disconnectRelay();
       disconnectRelay = null;
@@ -403,6 +465,7 @@ export function createRelayHandler(
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      "X-Content-Type-Options": "nosniff",
       ...(isSafeHeaderValue(env.requestId)
         ? { "X-Request-Id": env.requestId }
         : {}),
@@ -410,6 +473,9 @@ export function createRelayHandler(
         ? {
             "Access-Control-Allow-Origin": corsOrigin,
             "Access-Control-Expose-Headers": "X-Request-Id",
+            ...(allowCredentials
+              ? { "Access-Control-Allow-Credentials": "true" }
+              : {}),
           }
         : {}),
     };
@@ -448,12 +514,13 @@ export function createRelayHandler(
         },
         requestId,
         corsOrigin,
+        allowCredentials,
       );
       return;
     }
 
     if (method === "OPTIONS") {
-      writeEmpty(res, 204, requestId, corsOrigin);
+      writeEmpty(res, 204, requestId, corsOrigin, allowCredentials);
       return;
     }
 
@@ -471,21 +538,42 @@ export function createRelayHandler(
           },
           requestId,
           corsOrigin,
+          allowCredentials,
         );
         return;
       }
 
       const rawRoomId = match[1] ?? "";
-      const endpoint = match[2] ?? "";
+      const endpoint = (match[2] ?? "") as RelayEndpoint;
       const roomId = decodePart(rawRoomId);
+      const isSse = endpoint === "notifications";
+      const env: Envelope = isSse
+        ? {
+            schemaVersion: query.get("schemaVersion"),
+            requestId: query.get("requestId"),
+          }
+        : httpEnvelope(req);
+      requestId = env.requestId;
+      assertSafeRequestId(requestId);
 
-      if (endpoint === "notifications") {
-        const sseEnv: Envelope = {
-          schemaVersion: query.get("schemaVersion"),
-          requestId: query.get("requestId"),
-        };
-        requestId = sseEnv.requestId;
-        assertSafeRequestId(requestId);
+      let context: RelayRequestContext | undefined;
+      if (authenticate !== undefined) {
+        const principal = await authenticate({
+          method,
+          pathname,
+          roomId,
+          endpoint,
+          token: extractAuthToken(req, query, isSse),
+          headers: req.headers,
+          query,
+        });
+        if (principal === null || principal === undefined) {
+          throw new RelayError("UNAUTHORIZED", "authentication required");
+        }
+        context = { principal };
+      }
+
+      if (isSse) {
         if (method !== "GET") {
           res.setHeader("Allow", "GET, OPTIONS");
           writeJson(
@@ -498,17 +586,14 @@ export function createRelayHandler(
             },
             requestId,
             corsOrigin,
+            allowCredentials,
           );
           return;
         }
-        openSseStream(res, roomId, query.get("targetId") ?? "", sseEnv);
+        openSseStream(res, roomId, query.get("targetId") ?? "", env, context);
         scheduleLeaseExpiry();
         return;
       }
-
-      const env = httpEnvelope(req);
-      requestId = env.requestId;
-      assertSafeRequestId(requestId);
 
       if (endpoint === "control") {
         if (method === "GET") {
@@ -516,9 +601,10 @@ export function createRelayHandler(
             roomId,
             { targetId: query.get("targetId") ?? "" },
             env,
+            context,
           );
           scheduleLeaseExpiry();
-          writeJson(res, 200, snapshot, requestId, corsOrigin);
+          writeJson(res, 200, snapshot, requestId, corsOrigin, allowCredentials);
           return;
         }
         if (method === "POST") {
@@ -531,9 +617,10 @@ export function createRelayHandler(
               sendFilter: body.sendFilter,
             },
             env,
+            context,
           );
           scheduleLeaseExpiry();
-          writeJson(res, 200, result, requestId, corsOrigin);
+          writeJson(res, 200, result, requestId, corsOrigin, allowCredentials);
           return;
         }
         res.setHeader("Allow", "GET, POST, OPTIONS");
@@ -547,6 +634,7 @@ export function createRelayHandler(
           },
           requestId,
           corsOrigin,
+          allowCredentials,
         );
         return;
       }
@@ -563,6 +651,7 @@ export function createRelayHandler(
           },
           requestId,
           corsOrigin,
+          allowCredentials,
         );
         return;
       }
@@ -578,9 +667,10 @@ export function createRelayHandler(
               events: body.events,
             },
             env,
+            context,
           );
           scheduleLeaseExpiry();
-          writeJson(res, 200, result, requestId, corsOrigin);
+          writeJson(res, 200, result, requestId, corsOrigin, allowCredentials);
           return;
         }
         case "presence": {
@@ -588,9 +678,10 @@ export function createRelayHandler(
             roomId,
             { targetId: body.targetId as string },
             env,
+            context,
           );
           scheduleLeaseExpiry();
-          writeEmpty(res, 204, requestId, corsOrigin);
+          writeEmpty(res, 204, requestId, corsOrigin, allowCredentials);
           return;
         }
         case "lease": {
@@ -601,9 +692,10 @@ export function createRelayHandler(
               action: body.action as string,
             },
             env,
+            context,
           );
           scheduleLeaseExpiry();
-          writeJson(res, 200, result, requestId, corsOrigin);
+          writeJson(res, 200, result, requestId, corsOrigin, allowCredentials);
           return;
         }
       }
@@ -624,6 +716,7 @@ export function createRelayHandler(
           },
           safeRequestId,
           corsOrigin,
+          allowCredentials,
         );
         return;
       }
@@ -639,6 +732,7 @@ export function createRelayHandler(
           },
           safeRequestId,
           corsOrigin,
+          allowCredentials,
         );
       } catch (writeError) {
         onInternalError(writeError);

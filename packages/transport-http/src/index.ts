@@ -1,9 +1,13 @@
 export { HttpTransport } from "./http-transport.js";
-export type { HttpTransportOptions } from "./http-transport.js";
+export type {
+  AuthTokenProvider,
+  HttpTransportOptions,
+} from "./http-transport.js";
 export type {
   AbortControllerConstructor,
   AbortControllerLike,
   EventSourceConstructor,
+  EventSourceInitLike,
   EventSourceLike,
   FetchLike,
   MessageEventLike,

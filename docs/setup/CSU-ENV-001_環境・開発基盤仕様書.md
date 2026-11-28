@@ -5,7 +5,7 @@ document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
 status: "approved"
-version: "1.9"
+version: "1.10"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -95,8 +95,8 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 
 ### 4.5 設定・秘密情報
 
-- v0.1 は、秘密情報を扱わない（BD §3.2）。認証トークンなどが必要になった時点（#8）で、供給元と注入方法を定める。
-- `.env` などの秘密情報を含むファイルは、`.gitignore` に追加する。ログに秘密情報を出力しない。
+- 認証トークンは `HttpTransportOptions.authToken`（同期/非同期プロバイダ）およびサーバー側 `RelayHttpOptions.authenticate` 経由で外部から注入し、リポジトリ内へ固定値を書き込まない（#8）。
+- `.env` などの秘密情報を含むファイルは、`.gitignore` に追加する。監査フック（`onAudit`）および標準エラーログに秘密情報・トークン・`payload` 本文を出力しない。
 
 ### 4.6 再現性・サプライチェーン
 
@@ -148,5 +148,6 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.5 | 2026-11-28 | xzyozi | ロックファイル生成ワークフローに、公開から3日以内の版を固定しない設定（`--before`）を追加し、§4.6 に明記。                                                                                                                                                                      |
 | Rev.1.6 | 2026-11-28 | xzyozi | `package-lock.json` をルートにコミットし、`generate-lockfile.yml` を削除して例外 EX-002 を解除。                                                                                                                                                                                |
 | Rev.1.7 | 2026-11-28 | xzyozi | ADR-008（`accepted`）の決定を §4.3 へ反映し、`exports`・`types`・`sideEffects`・`engines`・ワークスペース/`file:` 両対応および統合手順書への参照を追加。                                                                                                                          |
+| Rev.1.10 | 2026-11-28 | xzyozi | #8 対応として §4.5 に認証トークンの注入方針（`authToken` / `authenticate`）と監査ログの秘密情報非出力を追記。 |
 | Rev.1.8 | 2026-11-28 | xzyozi | §4.3 に版の方針（Git タグ `vX.Y.Z`、破壊的変更時の版上げ、`schemaVersion` / `storageVersion` の互換性範囲）を追加。                                                                                                                                                              |
 | Rev.1.9 | 2026-11-28 | xzyozi | §1 の対象範囲（5パッケージ）・§4.4 の `e2e.yml` 自動検証・§4.6 の `generate-lockfile.yml` 記述整理を反映し、v0.1.0 リリースに向けて status を `approved` へ更新。                                                                                                             |

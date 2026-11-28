@@ -2,7 +2,12 @@ export { DEFAULTS } from "./defaults.js";
 export { ERROR_STATUS, RelayError } from "./errors.js";
 export type { RelayErrorCode } from "./errors.js";
 export { createRelayHandler } from "./http-handler.js";
-export type { RelayHttpController, RelayHttpOptions } from "./http-handler.js";
+export type {
+  RelayAuthRequest,
+  RelayAuthenticator,
+  RelayHttpController,
+  RelayHttpOptions,
+} from "./http-handler.js";
 export { startRelayServer } from "./http-server.js";
 export type { RelayServer, RelayServerOptions } from "./http-server.js";
 export type {
@@ -14,14 +19,27 @@ export type {
 export { RelayCore } from "./relay-core.js";
 export type {
   AcceptedEvent,
+  ChangeControlValidationContext,
   ControlSnapshot,
   ControlState,
+  CreateRoomOptions,
   Envelope,
+  IncomingEventRecord,
+  InvariantValidationResult,
   LeaseAction,
   LeaseResult,
+  LeaseValidationContext,
   Notification,
   NotificationListener,
   NotificationType,
+  PushEventsValidationContext,
+  RelayAuditEvent,
+  RelayAuthorizer,
+  RelayAuthzContext,
+  RelayEndpoint,
+  RelayOperation,
   RelayOptions,
+  RelayPrincipal,
+  RelayRequestContext,
   SendFilter,
 } from "./types.js";

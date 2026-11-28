@@ -12,6 +12,11 @@ export interface RequestInitLike {
   readonly headers?: Record<string, string>;
   readonly body?: string;
   readonly signal?: unknown;
+  readonly credentials?: "include" | "same-origin" | "omit";
+}
+
+export interface EventSourceInitLike {
+  readonly withCredentials?: boolean;
 }
 
 export type FetchLike = (
@@ -32,7 +37,10 @@ export interface EventSourceLike {
   close(): void;
 }
 
-export type EventSourceConstructor = new (url: string) => EventSourceLike;
+export type EventSourceConstructor = new (
+  url: string,
+  init?: EventSourceInitLike,
+) => EventSourceLike;
 
 export interface AbortControllerLike {
   readonly signal: unknown;

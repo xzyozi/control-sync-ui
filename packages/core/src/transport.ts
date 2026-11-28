@@ -19,15 +19,18 @@ export interface AcceptedEvent {
   readonly eventSeq: number;
 }
 
-/** サーバーが返すエラーコード（IF §2.2）。 */
+/** サーバーが返すエラーコード（IF §2.2、§3）。 */
 export type ServerErrorCode =
   | "INVALID_MESSAGE"
   | "SCHEMA_VERSION_MISMATCH"
+  | "UNAUTHORIZED"
+  | "FORBIDDEN"
   | "LOCK_NOT_HELD"
   | "ROOM_NOT_FOUND"
   | "STALE_CONTROL_SEQ"
   | "LOCK_HELD_BY_OTHER"
-  | "TARGET_OFFLINE";
+  | "TARGET_OFFLINE"
+  | "INVARIANT_VIOLATION";
 
 /** TransportPort が返し得るエラーコード（IF §2.2 および通信層の分類）。 */
 export type TransportErrorCode =
