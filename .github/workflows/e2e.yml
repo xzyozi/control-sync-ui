@@ -17,7 +17,7 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -41,11 +41,20 @@ jobs:
       - name: Build packages
         run: npm run build
 
-      - name: Install Playwright Chromium
+      - name: Install Playwright and resolve browser
+        id: browser
         shell: bash
         run: |
-          npm install --no-save playwright@1.49.1
-          npx playwright install --with-deps chromium
+          npm install --no-save playwright@1.52.0
+          chrome_bin="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$chrome_bin" ]; then
+            echo "Found system browser: $chrome_bin"
+            echo "chrome_path=$chrome_bin" >> "$GITHUB_ENV"
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: Run Browser E2E
+        env:
+          CHROME_PATH: ${{ env.chrome_path }}
         run: node packages/demo/e2e/browser-e2e.mjs

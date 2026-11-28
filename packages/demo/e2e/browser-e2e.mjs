@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import process from "node:process";
 import { chromium } from "playwright";
 import { startDemoServer } from "../dist/index.js";
 
@@ -85,7 +86,11 @@ async function main() {
     presenceTtlMs: 1_200,
   });
 
-  const browser = await chromium.launch({ headless: true });
+  const executablePath = process.env.CHROME_PATH || undefined;
+  const browser = await chromium.launch({
+    headless: true,
+    ...(executablePath !== undefined ? { executablePath } : {}),
+  });
   const errors = [];
 
   try {
