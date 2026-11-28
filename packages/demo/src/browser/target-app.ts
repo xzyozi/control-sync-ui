@@ -88,8 +88,9 @@ async function main(): Promise<void> {
   // ControlStore.applyControl の反映時にも即時再描画する。
   const origApplyControl = controlStore.applyControl.bind(controlStore);
   controlStore.applyControl = (controlSeq, next) => {
-    origApplyControl(controlSeq, next);
+    const applied = origApplyControl(controlSeq, next);
     scheduleRender();
+    return applied;
   };
 
   const domainStore = new DomainStore(
@@ -140,14 +141,15 @@ async function main(): Promise<void> {
     const pending = await storage.readPending(roomId);
     const pendingSet = new Set(pending.map((e) => e.eventId));
 
+    const currentControl = controlStore.getControl();
     el("sync-state").textContent = engine.state;
     el("domain-total").textContent = String(domainStore.state.total);
     el("domain-count").textContent = String(domainStore.state.eventCount);
     el("pending-count").textContent = String(pending.length);
-    el("target-control-seq").textContent = String(controlStore.controlSeq);
-    el("target-holder-id").textContent = controlStore.state.holderId ?? "null";
+    el("target-control-seq").textContent = String(controlStore.getControlSeq());
+    el("target-holder-id").textContent = currentControl.holderId ?? "null";
     el("target-send-filter").textContent = JSON.stringify(
-      controlStore.state.sendFilter,
+      currentControl.sendFilter,
     );
 
     const list = el("local-events");

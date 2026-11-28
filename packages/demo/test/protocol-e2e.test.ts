@@ -179,8 +179,8 @@ describe("4パッケージ結合 Protocol E2E (FR-01〜FR-05)", () => {
 
     target.engine.connect();
     await waitUntil(() => target.engine.state === "Ready");
-    expect(target.control.controlSeq).toBe(0);
-    expect(target.control.state.sendFilter).toEqual({ mode: "NONE" });
+    expect(target.control.getControlSeq()).toBe(0);
+    expect(target.control.getControl().sendFilter).toEqual({ mode: "NONE" });
 
     // NONE フィルタではローカルに未送信として留まる（FR-03）。
     await target.domain.apply({
@@ -294,8 +294,8 @@ describe("4パッケージ結合 Protocol E2E (FR-01〜FR-05)", () => {
     expect(conflict.body.code).toBe("LOCK_HELD_BY_OTHER");
 
     // 期限切れ後に op-1 が解放済みになり、target が SSE で controlSeq=2 (holderId=null) を受け取る。
-    await waitUntil(() => target.control.controlSeq >= 2);
-    expect(target.control.state.holderId).toBeNull();
+    await waitUntil(() => target.control.getControlSeq() >= 2);
+    expect(target.control.getControl().holderId).toBeNull();
 
     const acq2 = await postJson(server.baseUrl, "/rooms/room-a/lease", {
       operatorId: "op-2",
@@ -384,10 +384,10 @@ describe("4パッケージ結合 Protocol E2E (FR-01〜FR-05)", () => {
     expect(res.status).toBe(200);
     expect(res.body.controlSeq).toBe(2);
 
-    await waitUntil(() => targetX.control.controlSeq === 2);
+    await waitUntil(() => targetX.control.getControlSeq() === 2);
     // Room B には影響しない（TC-008）。
-    expect(targetB.control.controlSeq).toBe(0);
-    expect(targetB.control.state.sendFilter).toEqual({ mode: "NONE" });
+    expect(targetB.control.getControlSeq()).toBe(0);
+    expect(targetB.control.getControl().sendFilter).toEqual({ mode: "NONE" });
 
     // オフラインだった t-y が後から接続すると、Control-First Sync で controlSeq=2 を Pull してから未送信イベントを送る。
     const targetY = await createTargetClient({
@@ -402,7 +402,7 @@ describe("4パッケージ結合 Protocol E2E (FR-01〜FR-05)", () => {
     targetY.engine.connect();
     await waitUntil(
       async () =>
-        targetY.control.controlSeq === 2 &&
+        targetY.control.getControlSeq() === 2 &&
         (await targetY.storage.readPending("room-a")).length === 0,
     );
     expect(targetY.states.indexOf("Pulling")).toBeLessThan(
