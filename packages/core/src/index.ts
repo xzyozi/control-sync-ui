@@ -7,6 +7,7 @@ export { ReactiveOutbox, evaluateOutbox } from "./outbox";
 export type { StoragePort } from "./ports";
 export { SYNC_DEFAULTS, SyncEngine } from "./sync-engine";
 export type {
+  IgnoredEventInfo,
   Scheduler,
   StopReason,
   SyncEngineOptions,
@@ -18,7 +19,9 @@ export type {
   ConnectionHandlers,
   ControlSnapshot,
   NotificationConnection,
+  ServerErrorCode,
   ServerNotification,
+  TransportErrorCode,
   TransportPort,
 } from "./transport";
 export type {

@@ -19,17 +19,37 @@ export interface AcceptedEvent {
   readonly eventSeq: number;
 }
 
+/** サーバーが返すエラーコード（IF §2.2）。 */
+export type ServerErrorCode =
+  | "INVALID_MESSAGE"
+  | "SCHEMA_VERSION_MISMATCH"
+  | "LOCK_NOT_HELD"
+  | "ROOM_NOT_FOUND"
+  | "STALE_CONTROL_SEQ"
+  | "LOCK_HELD_BY_OTHER"
+  | "TARGET_OFFLINE";
+
+/** TransportPort が返し得るエラーコード（IF §2.2 および通信層の分類）。 */
+export type TransportErrorCode =
+  | ServerErrorCode
+  | "INVALID_RESPONSE"
+  | `HTTP_${number}`;
+
 /**
  * サーバーが返したエラー、または通信の失敗（IF §2.2、DD §4.1）。
  * `code` が undefined の場合は、通信の失敗（接続の失敗、タイムアウト、HTTP 5xx）。
  */
 export class TransportError extends Error {
   /** IF のエラーコード（`STALE_CONTROL_SEQ` など）。通信の失敗の場合は undefined。 */
-  readonly code: string | undefined;
+  readonly code: TransportErrorCode | undefined;
   /** `STALE_CONTROL_SEQ` のときの、サーバーの最新値。 */
   readonly controlSeq: number | undefined;
 
-  constructor(message: string, code?: string, controlSeq?: number) {
+  constructor(
+    message: string,
+    code?: TransportErrorCode,
+    controlSeq?: number,
+  ) {
     super(message);
     this.name = "TransportError";
     this.code = code;
@@ -42,7 +62,7 @@ export class TransportError extends Error {
   }
 }
 
-/** 更新通知の接続（IF-003）。接続の状態を、listener で受け取る。 */
+/** 更新通知の接続（IF-003）。`close()` で切断する。通知は `connect()` に渡す handlers で受け取る。 */
 export interface NotificationConnection {
   /** 接続を閉じる。 */
   close(): void;
@@ -54,9 +74,13 @@ export interface ConnectionHandlers {
   readonly onNotification: (notification: ServerNotification) => void;
   /**
    * 接続が切れた。`closed` が true の場合は、再接続されない（EventSource の
-   * `CLOSED`）。クライアントは、IF-001 を実行して原因を判別する。
+   * `CLOSED`）。`code` が渡された場合（通知の `SCHEMA_VERSION_MISMATCH` など）は、
+   * そのコードで原因を判別できる。それ以外の `closed` は、IF-001 を実行して原因を判別する。
    */
-  readonly onError: (info: { readonly closed: boolean }) => void;
+  readonly onError: (info: {
+    readonly closed: boolean;
+    readonly code?: TransportErrorCode;
+  }) => void;
 }
 
 /**

@@ -4,6 +4,7 @@ import type { StoragePort } from "./ports";
 import {
   type NotificationConnection,
   type ServerNotification,
+  type TransportErrorCode,
   type TransportPort,
   TransportError,
 } from "./transport";
@@ -23,6 +24,12 @@ export type StopReason =
   | "RETRY_LIMIT"
   | "INVALID_REQUEST"
   | "UNEXPECTED";
+
+/** 現在の状態に対して未定義のイベントが無視されたときの情報（DD §3.2）。 */
+export interface IgnoredEventInfo {
+  readonly state: SyncState;
+  readonly event: string;
+}
 
 /** 時間に依存する処理の抽象。テストでは、手動で進められるように注入する。 */
 export interface Scheduler {
@@ -53,11 +60,15 @@ export interface SyncEngineOptions {
   readonly scheduler: Scheduler;
   /** requestId の生成器。呼び出しごとに、一意な値を返す。 */
   readonly newRequestId: () => string;
-  /** 0 以上 1 未満の乱数（待ち時間の揺らぎに使う）。 */
+  /** 0 以上 1 未満の乱数（待ち時間の揺らぎに使う）。既定は `Math.random`。 */
   readonly random?: () => number;
   readonly onStateChange?: (state: SyncState) => void;
   /** 停止したときに呼ぶ。`UNEXPECTED` のときは、`error` に原因を渡す。 */
   readonly onStopped?: (reason: StopReason, error?: unknown) => void;
+  /** 未定義のイベントが無視されたときに呼ぶ（DD §3.2）。 */
+  readonly onIgnoredEvent?: (info: IgnoredEventInfo) => void;
+  /** コールバックが例外を投げたときに呼ぶ。 */
+  readonly onCallbackError?: (error: unknown) => void;
   readonly presenceIntervalMs?: number;
   readonly maxRetries?: number;
   readonly retryDelaysMs?: readonly number[];
@@ -82,6 +93,11 @@ export class SyncEngine {
   private generation = 0;
   private pulling = false;
   private pullAgain = false;
+  /** 再試行で同じ requestId を使うために保持する（DD F-004）。 */
+  private pendingConnectRequestId: string | null = null;
+  private pendingFetchRequestId: string | null = null;
+  private pendingPushRequestId: string | null = null;
+  private pendingPushKey: string | null = null;
 
   private readonly outbox: ReactiveOutbox;
   private readonly random: () => number;
@@ -97,7 +113,7 @@ export class SyncEngine {
       options.roomId,
       options.targetId,
     );
-    this.random = options.random ?? (() => 0.5);
+    this.random = options.random ?? Math.random;
     this.presenceIntervalMs =
       options.presenceIntervalMs ?? SYNC_DEFAULTS.presenceIntervalMs;
     this.maxRetries = options.maxRetries ?? SYNC_DEFAULTS.maxRetries;
@@ -110,30 +126,36 @@ export class SyncEngine {
     return this.currentState;
   }
 
-  /** 接続を開始する。`Disconnected` のときだけ有効（それ以外は、何もしない）。 */
+  /** 接続を開始する。`Disconnected` のときだけ有効（それ以外は無視して記録する）。 */
   connect(): void {
     if (this.currentState !== "Disconnected") {
+      this.recordIgnoredEvent("connect");
       return;
     }
     this.failures = 0;
     this.staleCount = 0;
+    this.clearPendingRequestIds();
     this.startConnection();
   }
 
   /** 切断する。heartbeat を止め、接続を閉じ、進行中の再試行をキャンセルする。 */
   disconnect(): void {
     if (this.currentState === "Stopped") {
+      this.recordIgnoredEvent("disconnect");
       return;
     }
+    this.clearPendingRequestIds();
     this.teardown();
     this.setState("Disconnected");
   }
 
   /** 保存済みのイベントが増えたときに、呼ぶ（`Ready` のときだけ、送信を試みる）。 */
   notifyLocalEvents(): void {
-    if (this.currentState === "Ready") {
-      void this.pullAndPush();
+    if (this.currentState !== "Ready") {
+      this.recordIgnoredEvent("notifyLocalEvents");
+      return;
     }
+    void this.pullAndPush();
   }
 
   // ---- 内部 ----
@@ -143,7 +165,62 @@ export class SyncEngine {
       return;
     }
     this.currentState = next;
-    this.options.onStateChange?.(next);
+    this.invokeCallback(() => this.options.onStateChange?.(next));
+  }
+
+  private invokeCallback(fn: () => void): void {
+    try {
+      fn();
+    } catch (error) {
+      try {
+        this.options.onCallbackError?.(error);
+      } catch {
+        // コールバックの例外が非同期処理の未処理拒否に漏れないように隔離する。
+      }
+    }
+  }
+
+  private recordIgnoredEvent(event: string): void {
+    const state = this.currentState;
+    if (this.options.onIgnoredEvent === undefined) {
+      return;
+    }
+    this.invokeCallback(() => this.options.onIgnoredEvent?.({ state, event }));
+  }
+
+  private requestArgs(requestId: string): {
+    roomId: string;
+    targetId: string;
+    requestId: string;
+  } {
+    return {
+      roomId: this.options.roomId,
+      targetId: this.options.targetId,
+      requestId,
+    };
+  }
+
+  private clearPendingRequestIds(): void {
+    this.pendingConnectRequestId = null;
+    this.pendingFetchRequestId = null;
+    this.pendingPushRequestId = null;
+    this.pendingPushKey = null;
+  }
+
+  private getFetchRequestId(): string {
+    if (this.pendingFetchRequestId === null) {
+      this.pendingFetchRequestId = this.options.newRequestId();
+    }
+    return this.pendingFetchRequestId;
+  }
+
+  private getPushRequestId(controlSeq: number, eventIds: readonly string[]): string {
+    const key = `${controlSeq}:${eventIds.join(",")}`;
+    if (this.pendingPushRequestId === null || this.pendingPushKey !== key) {
+      this.pendingPushRequestId = this.options.newRequestId();
+      this.pendingPushKey = key;
+    }
+    return this.pendingPushRequestId;
   }
 
   private teardown(): void {
@@ -159,26 +236,27 @@ export class SyncEngine {
   }
 
   private stop(reason: StopReason, error?: unknown): void {
+    this.clearPendingRequestIds();
     this.teardown();
     this.setState("Stopped");
-    this.options.onStopped?.(reason, error);
+    this.invokeCallback(() => this.options.onStopped?.(reason, error));
   }
 
   /** Connecting: 更新通知の接続を開く。 */
   private startConnection(): void {
     this.setState("Connecting");
     const generation = this.generation;
+    if (this.pendingConnectRequestId === null) {
+      this.pendingConnectRequestId = this.options.newRequestId();
+    }
     this.connection = this.options.transport.connect(
-      {
-        roomId: this.options.roomId,
-        targetId: this.options.targetId,
-        requestId: this.options.newRequestId(),
-      },
+      this.requestArgs(this.pendingConnectRequestId),
       {
         onOpen: () => {
           if (generation !== this.generation) {
             return;
           }
+          this.pendingConnectRequestId = null;
           this.startPresence();
           // 接続が開くたびに（初回と自動再接続）、IF-001 から、やり直す。
           this.setState("Pulling");
@@ -190,11 +268,11 @@ export class SyncEngine {
           }
           this.handleNotification(notification);
         },
-        onError: ({ closed }) => {
+        onError: (info) => {
           if (generation !== this.generation) {
             return;
           }
-          this.handleConnectionError(closed);
+          this.handleConnectionError(info);
         },
       },
     );
@@ -205,11 +283,7 @@ export class SyncEngine {
     const generation = this.generation;
     const send = (): void => {
       void this.options.transport
-        .sendPresence({
-          roomId: this.options.roomId,
-          targetId: this.options.targetId,
-          requestId: this.options.newRequestId(),
-        })
+        .sendPresence(this.requestArgs(this.options.newRequestId()))
         .catch((error: unknown) => {
           // presence の失敗は、次の周期で再送する。TTL を超えると、サーバーが
           // オフラインと判定する。スキーマの不一致だけは、停止する。
@@ -230,24 +304,62 @@ export class SyncEngine {
   }
 
   private handleNotification(notification: ServerNotification): void {
-    if (this.currentState === "Ready" && notification.type === "CONTROL_UPDATED") {
-      this.setState("Pulling");
-      void this.pullAndPush();
+    if (notification.type === "CONTROL_UPDATED") {
+      if (this.currentState === "Ready") {
+        this.setState("Pulling");
+        void this.pullAndPush();
+      } else {
+        this.recordIgnoredEvent("CONTROL_UPDATED");
+      }
     }
   }
 
-  private handleConnectionError(closed: boolean): void {
+  private handleConnectionError(info: {
+    readonly closed: boolean;
+    readonly code?: TransportErrorCode;
+  }): void {
     if (this.currentState === "Stopped" || this.currentState === "Disconnected") {
+      this.recordIgnoredEvent("CONNECTION_ERROR");
       return;
     }
-    if (closed) {
-      // CLOSED: 再接続されない。IF-001 を実行して、原因を判別する。
+    if (info.code === "SCHEMA_VERSION_MISMATCH") {
+      this.stop("SCHEMA_VERSION_MISMATCH");
+      return;
+    }
+    if (info.closed) {
+      // CLOSED: 再接続されない。IF-001 を実行して原因を判別し、
+      // 致命的なエラーでなければ Retrying へ移って接続を張り直す（DD §3.2）。
+      this.pendingConnectRequestId = null;
       this.setState("Pulling");
-      void this.pullAndPush();
+      void this.diagnoseClosedConnection();
       return;
     }
     // 自動再接続が行われる。open で、IF-001 から、やり直す。
     this.scheduleRetry();
+  }
+
+  private async diagnoseClosedConnection(): Promise<void> {
+    const generation = this.generation;
+    try {
+      const snapshot = await this.options.transport.fetchControl(
+        this.requestArgs(this.getFetchRequestId()),
+      );
+      if (generation !== this.generation) {
+        return;
+      }
+      this.pendingFetchRequestId = null;
+      this.options.controlStore.applyControl(
+        snapshot.controlSeq,
+        snapshot.control,
+      );
+      // SSE 接続が CLOSED のため、Retrying を経て再接続する。
+      this.scheduleRetry();
+    } catch (error) {
+      if (generation !== this.generation) {
+        return;
+      }
+      this.handleFailure(error);
+    }
   }
 
   /**
@@ -281,14 +393,13 @@ export class SyncEngine {
     try {
       // 1. 制御状態を取得し、反映する（IF-001）。
       this.setState("Pulling");
-      const snapshot = await transport.fetchControl({
-        roomId,
-        targetId,
-        requestId: this.options.newRequestId(),
-      });
+      const snapshot = await transport.fetchControl(
+        this.requestArgs(this.getFetchRequestId()),
+      );
       if (generation !== this.generation) {
         return;
       }
+      this.pendingFetchRequestId = null;
       controlStore.applyControl(snapshot.controlSeq, snapshot.control);
 
       // 2. 未送信のイベントを評価する。
@@ -298,22 +409,30 @@ export class SyncEngine {
       }
       this.setState("Ready");
       if (batch.events.length === 0) {
+        this.pendingPushRequestId = null;
+        this.pendingPushKey = null;
         this.failures = 0;
         this.staleCount = 0;
         return;
       }
 
       // 3. 送信する（IF-002）。評価時の controlSeq を、そのまま使う。
+      const pushRequestId = this.getPushRequestId(
+        batch.controlSeq,
+        batch.events.map((e) => e.eventId),
+      );
       const accepted = await transport.pushEvents({
         roomId,
         targetId,
         controlSeq: batch.controlSeq,
         events: batch.events,
-        requestId: this.options.newRequestId(),
+        requestId: pushRequestId,
       });
       if (generation !== this.generation) {
         return;
       }
+      this.pendingPushRequestId = null;
+      this.pendingPushKey = null;
       for (const item of accepted) {
         await this.options.storage.markSent(item.eventId, item.eventSeq);
       }
@@ -339,10 +458,13 @@ export class SyncEngine {
         this.stop("SCHEMA_VERSION_MISMATCH");
         return;
       case "STALE_CONTROL_SEQ":
+        // 再評価で controlSeq や送信対象が変わるため、次の IF-002 は新しい requestId を使う。
+        this.pendingPushRequestId = null;
+        this.pendingPushKey = null;
         this.staleCount += 1;
         if (this.staleCount > this.maxStaleRetries) {
           // 競合が続く。通信エラー1回として数え、手順を最初からやり直す。
-          this.staleCount = 0;
+          // 連続回数は Push が受理されるまで 0 に戻さない（DD V-11）。
           this.scheduleRetry();
         } else {
           // イベントは、破棄しない。IF-001 を取得し直して、再評価する。

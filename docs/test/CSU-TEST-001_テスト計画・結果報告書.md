@@ -5,7 +5,7 @@ document_number: "CSU-TEST-001"
 document_role: "evidence"
 ssot_scope: "test_evidence"
 status: "draft"
-version: "0.1"
+version: "0.2"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -31,7 +31,7 @@ related_documents:
 ## 1. 目的・対象範囲
 
 - **目的**: IF/API仕様書の機能テスト要件（TR-001〜013）と、DD の機能テスト要件（TR-101〜120）を、テストケースに対応付け、実装後に検証できる状態にする。
-- **テスト対象**: サーバー（v0.1 の参照実装は `relay`）の IF-001〜IF-006、`core`（Domain Store、Control Store、Reactive Outbox、Sync Engine）、`storage-indexeddb`。
+- **テスト対象**: サーバー（v0.1 の参照実装は `relay`）の IF-001〜IF-006、`core`（Domain Store、Control Store、Reactive Outbox、Sync Engine）、`transport-http`（HTTP と SSE の `TransportPort` 実装）、`storage-indexeddb`。
 - **対象外**: 認証・認可（#8）、複数操作者の競合（#2）、Mailbox（#4）、OPFS（#5）、スナップショット（#6）、スキーマ進化（#7）、UI バインディング（#10）。性能・負荷テストは、v0.1 では実施しない。
 - **関連する要求・設計**: [要件定義書](../features/CSU-REQ-001_最小要件定義書.md) の FR-01〜FR-05、NFR-01、NFR-03。[IF/API仕様書](../design/CSU-IF-001_IF仕様書.md) §6、[DD](../design/CSU-DD-001_詳細設計書.md) §5.1。
 
@@ -123,6 +123,18 @@ related_documents:
 | TC-204   | `strict: true` の型検査                | 各パッケージを型検査する                                          | エラー 0 件。`tsconfig` で `strict: true` が有効。                                                                                                          | 要件定義書 NFR-01、ENV QG-002 |          | 未実施 |      |
 | TC-205   | `core` の依存の有無                    | `core` の `package.json` の `dependencies` を確認する             | `dependencies` が空である。                                                                                                                                 | 要件定義書 CN-02、ENV §5      |          | 未実施 |      |
 
+### 4.4 `transport-http` の契約テスト
+
+| ケースID | 対象・条件                             | 入力・操作                                                                                  | 期待結果                                                                                                               | 期待結果の根拠            | 実績結果 | 判定   | 証跡 |
+| :------- | :------------------------------------- | :------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------- | :------------------------ | :------- | :----- | :--- |
+| TC-301   | HTTP/SSE リクエストと共通項目          | IF-001〜IF-004 を実行する                                                                   | HTTP は `X-Schema-Version`・`X-Request-Id` ヘッダー、SSE はクエリパラメータに載る。                                    | IF §2.2、§4.1〜§4.4       |          | 未実施 |      |
+| TC-302   | 既定 `fetch` の呼び出し                | `options.fetch` を省略して `fetchControl` を呼ぶ                                            | グローバル `fetch` が `this` 束縛なしで呼ばれ、`Illegal invocation` にならない。                                       | ENV §2、BD C-010          |          | 未実施 |      |
+| TC-303   | 2xx 不正応答・信頼境界の検証           | 不正な JSON、またはスキーマ外の `ControlSnapshot` / `accepted` を返す                       | `INVALID_RESPONSE` の `TransportError` が投げられる。                                                                  | DD §4.1、IF §4.1・§4.2    |          | 未実施 |      |
+| TC-304   | 通信・本文読込・タイムアウト・5xx      | 通信失敗、`response.text()` の拒否・遅延、HTTP 5xx を発生させる                            | `code` なしの `TransportError`（再試行可）になる。本文読み込み中もタイムアウト（V-05）が効く。                         | DD V-05、§4.1             |          | 未実施 |      |
+| TC-305   | 4xx エラー応答の変換                   | 共通エラー形式（`STALE_CONTROL_SEQ` 等）、未知コード JSON、非 JSON の 4xx を返す            | 既知コードは `code`（と `controlSeq`）を引き継ぐ。未知コード・非 JSON は `HTTP_<status>` になる。                      | IF §2.2、DD §4.1          |          | 未実施 |      |
+| TC-306   | SSE 通知の `schemaVersion` 検証        | 一致する通知、欠落・不正形式の通知、不一致の `schemaVersion` の通知を受信する               | 一致する通知のみ中継し、欠落・不正は無視する。不一致は接続を閉じて `SCHEMA_VERSION_MISMATCH` を通知する。               | IF §4.3.2、§5、REQ NFR-03 |          | 未実施 |      |
+| TC-307   | SSE の切断検知と `close()`             | `onerror`（`readyState` が `0` と `2`）と `close()` を呼ぶ                                  | `readyState === 2` のみ `closed: true` を返し、`close()` は内部 `EventSource` を閉じる。                               | IF §4.3.3                 |          | 未実施 |      |
+
 ## 5. 実施結果
 
 実装前のため、実行の記録はない。
@@ -166,3 +178,4 @@ related_documents:
 | 版数    | 改訂日     | 変更者 | 変更内容・変更理由 (Why)                                                                                                   |
 | :------ | :--------- | :----- | :------------------------------------------------------------------------------------------------------------------------- |
 | Rev.0.1 | 2026-11-28 | xzyozi | 新規作成。TR-001〜013、TR-101〜120 に対応するケース（TC-001〜013、TC-101〜120）と、DS・非機能の確認（TC-201〜205）を定義。 |
+| Rev.0.2 | 2026-11-28 | xzyozi | レビュー指摘（#25）を反映し、§1 のテスト対象に `transport-http` を追加、§4.4 に `TC-301〜TC-307` を定義。 |
