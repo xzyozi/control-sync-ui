@@ -1,4 +1,4 @@
-import type { ControlState, StoredEvent } from "./types";
+import type { ControlState, StoredEvent } from "./types.js";
 
 /** サーバーからの通知（IF-003 の `data`）。 */
 export interface ServerNotification {

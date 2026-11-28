@@ -1,5 +1,5 @@
-import { DEFAULTS } from "./defaults";
-import { RelayError } from "./errors";
+import { DEFAULTS } from "./defaults.js";
+import { RelayError } from "./errors.js";
 import type {
   AcceptedEvent,
   ControlSnapshot,
@@ -10,14 +10,14 @@ import type {
   NotificationListener,
   NotificationType,
   RelayOptions,
-} from "./types";
+} from "./types.js";
 import {
   isRecord,
   parseLeaseAction,
   parseSendFilter,
   requireSeq,
   requireString,
-} from "./validation";
+} from "./validation.js";
 
 // lib に DOM を含めず、@types/node にも依存しないため、使う分だけを宣言する。
 // 実行時は、グローバルの console を指す。

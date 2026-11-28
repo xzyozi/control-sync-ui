@@ -1,13 +1,13 @@
-import type { ControlStore } from "./control-store";
-import { ReactiveOutbox } from "./outbox";
-import type { StoragePort } from "./ports";
+import type { ControlStore } from "./control-store.js";
+import { ReactiveOutbox } from "./outbox.js";
+import type { StoragePort } from "./ports.js";
 import {
   type NotificationConnection,
   type ServerNotification,
   type TransportErrorCode,
   type TransportPort,
   TransportError,
-} from "./transport";
+} from "./transport.js";
 
 /** Sync Engine の状態（DD §3.2）。 */
 export type SyncState =

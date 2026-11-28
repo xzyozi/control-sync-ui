@@ -9,14 +9,14 @@ import {
   StorageBlockedError,
   StorageCorruptionError,
   UnsupportedStorageVersionError,
-} from "./errors";
+} from "./errors.js";
 import type {
   IdbDatabaseLike,
   IdbFactoryLike,
   IdbKeyRangeFactory,
   IdbRequestLike,
   IdbTransactionLike,
-} from "./idb-types";
+} from "./idb-types.js";
 
 declare const indexedDB: IdbFactoryLike | undefined;
 declare const IDBKeyRange: IdbKeyRangeFactory | undefined;

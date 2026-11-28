@@ -1,5 +1,5 @@
-import { RelayError } from "./errors";
-import type { LeaseAction, SendFilter } from "./types";
+import { RelayError } from "./errors.js";
+import type { LeaseAction, SendFilter } from "./types.js";
 
 /** lease の操作を検証する（IF §4.5.1）。そうでなければ INVALID_MESSAGE。 */
 export function parseLeaseAction(value: unknown): LeaseAction {

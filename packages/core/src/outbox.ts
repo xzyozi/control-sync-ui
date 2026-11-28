@@ -1,6 +1,6 @@
-import type { ControlStore } from "./control-store";
-import type { StoragePort } from "./ports";
-import type { SendBatch, SendFilter, StoredEvent } from "./types";
+import type { ControlStore } from "./control-store.js";
+import type { StoragePort } from "./ports.js";
+import type { SendBatch, SendFilter, StoredEvent } from "./types.js";
 
 /** 送信対象のイベントが、フィルタに合うかを判定する（DD F-003）。 */
 function matchesFilter(

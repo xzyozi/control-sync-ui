@@ -1,4 +1,4 @@
-import { startDemoServer } from "./server";
+import { startDemoServer } from "./server.js";
 
 declare const process: {
   readonly argv: readonly string[];

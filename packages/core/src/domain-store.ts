@@ -1,6 +1,6 @@
-import { DuplicateEventError } from "./errors";
-import type { StoragePort } from "./ports";
-import type { DomainEventInput, Reducer } from "./types";
+import { DuplicateEventError } from "./errors.js";
+import type { StoragePort } from "./ports.js";
+import type { DomainEventInput, Reducer } from "./types.js";
 
 /** `apply` に渡すイベント。roomId は DomainStore が付け、createdAt は省略できる。 */
 export type ApplyInput = Omit<DomainEventInput, "roomId" | "createdAt"> & {

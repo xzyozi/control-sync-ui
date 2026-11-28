@@ -5,7 +5,7 @@ document_number: "CSU-ENV-001"
 document_role: "normative"
 ssot_scope: "environment"
 status: "draft"
-version: "1.6"
+version: "1.7"
 created_at: "2026-11-28"
 updated_at: "2026-11-28"
 author: "xzyozi"
@@ -64,8 +64,9 @@ related_documents:
 
 ### 4.3 ビルド・パッケージング・配布
 
-- **成果物**: 各パッケージの `npm run build` が、`dist/` にコンパイル結果を出力する。
-- **配布**: 親プロジェクトへは Git サブモジュールで組み込む。npm への公開は、v0.1 の対象外。
+- **成果物**: 各パッケージの `npm run build` が、`dist/` に ESM（`.js` 拡張子付きの相対インポート）と型定義（`.d.ts`）を出力する。`dist/` は Git に含めない（[ADR-008](../adr/ADR-008_サブモジュールとしての消費方式.md)）。
+- **パッケージ契約**: `core`・`storage-indexeddb`・`transport-http`・`relay` は `package.json` で `exports`（`.` の `types` / `import` / `default`）・`sideEffects: false`・`engines`（`node >= 20`）を公開する。内部のパッケージ間依存は `file:../core` を用い、`file:` 参照時にも公開レジストリへ解決を試みない。
+- **配布・組み込み**: 親プロジェクトへは Git サブモジュールで組み込む。親はサブモジュール内で `npm ci && npm run build` を実行したうえで、**npm workspaces 併用**または **`file:` 依存**で各パッケージを参照する。具体的な手順は [サブモジュール統合手順書](../how-to/submodule_integration.md) を正本とする。npm レジストリへの公開は、v0.1 の対象外。
 
 ### 4.4 CI/CD・品質ゲート
 
@@ -115,8 +116,8 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 
 ## 7. 関連文書
 
-- **構築手順**: [TypeScript プロジェクト環境構築手順書](./typescript_setup.md)、[依存管理](./dependency_management.md)
-- **設計書**: [BD](../design/CSU-BD-001_基本設計書.md)、[DD](../design/CSU-DD-001_詳細設計書.md)、[DS](../design/CSU-DS-001_データ構造仕様書.md)、[IF](../design/CSU-IF-001_IF仕様書.md)
+- **構築・統合手順**: [TypeScript プロジェクト環境構築手順書](./typescript_setup.md)、[依存管理](./dependency_management.md)、[サブモジュール統合手順書](../how-to/submodule_integration.md)
+- **設計書・ADR**: [BD](../design/CSU-BD-001_基本設計書.md)、[DD](../design/CSU-DD-001_詳細設計書.md)、[DS](../design/CSU-DS-001_データ構造仕様書.md)、[IF](../design/CSU-IF-001_IF仕様書.md)、[ADR-008](../adr/ADR-008_サブモジュールとしての消費方式.md)
 - **運用・テスト**: [CSU-TEST-001 テスト計画・結果報告書](../test/CSU-TEST-001_テスト計画・結果報告書.md)
 
 ## 8. 作成完了チェック
@@ -141,3 +142,4 @@ CI は、`main` と `develop` への `push` と `pull_request` で実行する�
 | Rev.1.4 | 2026-11-28 | xzyozi | CI の lint（QG-001）が、既存の `.github/scripts/validateMermaidMarkdown.mjs` の `noForEach` で失敗したため、Biome の検査対象を `packages/` とルートの `vitest.config.ts` に限定し、QG-001 の範囲として明記。                                                                    |
 | Rev.1.5 | 2026-11-28 | xzyozi | ロックファイル生成ワークフローに、公開から3日以内の版を固定しない設定（`--before`）を追加し、§4.6 に明記。                                                                                                                                                                      |
 | Rev.1.6 | 2026-11-28 | xzyozi | `package-lock.json` をルートにコミットし、`generate-lockfile.yml` を削除して例外 EX-002 を解除。                                                                                                                                                                                |
+| Rev.1.7 | 2026-11-28 | xzyozi | ADR-008（`accepted`）の決定を §4.3 へ反映し、`exports`・`types`・`sideEffects`・`engines`・ワークスペース/`file:` 両対応および統合手順書への参照を追加。                                                                                                                          |
